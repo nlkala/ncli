@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0-rc.46]
+
+### Fixed
+
+- Fixes a NIP-46 consent flaw where approving a bunker `connect` silently granted every permission the app requested, permanently, even for an "Approve Once". The approval now shows the requested scope, "Approve Once" remembers nothing, and sensitive kinds (0/3/5 -- identity, contacts, deletion) always require per-request consent. ([#204](https://github.com/ohstr/ncli/pull/204))
+
 ## [0.8.0-rc.45]
 
 ### Changed

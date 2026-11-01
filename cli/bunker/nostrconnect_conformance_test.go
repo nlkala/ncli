@@ -458,6 +458,52 @@ func TestDaemon_NostrconnectFlow_StopsDialingADeadRelay(t *testing.T) {
 	}
 }
 
+// TestDaemon_NostrconnectFlow_DisclosesEmbeddedPerms guards the fourth part
+// of the connect-consent fix: the nostrconnect:// direction has no approval
+// dialog, so the perms embedded in the URI (never shown to the operator) must
+// at least be surfaced in the activity log before they are remembered as
+// standing grants -- undisclosed scope is never applied silently.
+func TestDaemon_NostrconnectFlow_DisclosesEmbeddedPerms(t *testing.T) {
+	relay := newFakeRelay(t)
+
+	clientPub, err := utils.GetPublicKey(testClientPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	daemon := newNostrconnectDaemon(t, ctx, relay.url.String())
+	client := newNostrconnectTestClient(t, ctx, relay.url, testClientPriv, clientPub)
+
+	const secret = "nostrconnect-perms-disclosure-secret"
+	const perms = "sign_event:1,nip44_decrypt"
+	schema := &nip46.NostrconnectSchema{
+		ClientPublickey: clientPub,
+		Relays:          []*url.URL{relay.url},
+		Secret:          secret,
+		Perms:           perms,
+		Metadata:        &nip46.Metadata{},
+	}
+
+	initiateErr := make(chan error, 1)
+	go func() { initiateErr <- daemon.InitiateNostrconnect(ctx, schema) }()
+
+	client.awaitConnectResponse(t, secret)
+	if err := <-initiateErr; err != nil {
+		t.Fatalf("InitiateNostrconnect() error = %v", err)
+	}
+
+	if countLogsMentioning(daemon, perms) == 0 {
+		t.Errorf("the embedded perms %q were never surfaced in the activity log; lines = %v", perms, daemon.RecentLogs().Lines)
+	}
+	// The perms are still applied -- disclosure, not refusal.
+	if got := daemon.cfg.Store.Decide(clientPub, nip46.MethodSignEvent, 1); got != Allow {
+		t.Errorf("Decide(sign_event kind 1) = %v, want Allow (the URI's perms applied)", got)
+	}
+}
+
 func countLogsMentioning(d *Daemon, substr string) int {
 	n := 0
 	for _, line := range d.RecentLogs().Lines {

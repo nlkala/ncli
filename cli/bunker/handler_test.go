@@ -177,6 +177,107 @@ func TestHandle_Connect_GoesThroughApprovalQueueWhenNoGrant(t *testing.T) {
 	}
 }
 
+// TestHandle_Connect_SurfacesRequestedPerms guards the first half of the
+// NIP-46 connect-consent fix: a connect's requested permission scope
+// (Params[2]) must reach the Pending as Perms, since that -- never the raw
+// Params, whose [1] is the pairing secret -- is what the TUI/CLI approval
+// surfaces display so a human sees exactly what scope they are granting.
+func TestHandle_Connect_SurfacesRequestedPerms(t *testing.T) {
+	h, signerPub, clientPub := newTestHandler(t)
+	h.SetPendingSecret("s3cr3t")
+	perms := "sign_event,sign_event:0,nip44_decrypt"
+	req := buildRequest(t, signerPub, nip46.MethodConnect, []string{signerPub, "s3cr3t", perms})
+
+	done := make(chan *nip01.Event, 1)
+	go func() { done <- h.Handle(req, nip46.EncryptionNIP04) }()
+
+	waitFor(t, func() bool { return len(h.Queue.List()) == 1 })
+	pending := h.Queue.List()[0]
+	if pending.ClientKey != clientPub || pending.Method != nip46.MethodConnect {
+		t.Fatalf("pending = %+v, want connect from %s", pending, clientPub)
+	}
+	if pending.Perms != perms {
+		t.Errorf("pending.Perms = %q, want %q (the requested scope must be surfaced)", pending.Perms, perms)
+	}
+
+	if err := h.Queue.Resolve(pending.ID, Allow, false); err != nil {
+		t.Fatal(err)
+	}
+	if resp := parseResponse(t, <-done); resp.Result != "ack" {
+		t.Errorf("Result = %q, want ack", resp.Result)
+	}
+}
+
+// TestHandle_Connect_ApproveOnce_RemembersNoPerms is the core of making
+// "Approve Once" actually once: even when the connect asked for a full,
+// sensitive perm set, a one-time approval (Resolve with remembered=false)
+// must pair the app but remember NOTHING, so every later request still
+// prompts. Before the fix, pair() turned every requested perm into a
+// permanent GrantForever regardless of the human choosing "once".
+func TestHandle_Connect_ApproveOnce_RemembersNoPerms(t *testing.T) {
+	h, signerPub, clientPub := newTestHandler(t)
+	h.SetPendingSecret("s3cr3t")
+	perms := "sign_event,sign_event:0,sign_event:3,sign_event:5,nip44_decrypt"
+	req := buildRequest(t, signerPub, nip46.MethodConnect, []string{signerPub, "s3cr3t", perms})
+
+	done := make(chan *nip01.Event, 1)
+	go func() { done <- h.Handle(req, nip46.EncryptionNIP04) }()
+
+	waitFor(t, func() bool { return len(h.Queue.List()) == 1 })
+	pending := h.Queue.List()[0]
+	if err := h.Queue.Resolve(pending.ID, Allow, false); err != nil { // "Approve Once"
+		t.Fatal(err)
+	}
+	if resp := parseResponse(t, <-done); resp.Result != "ack" {
+		t.Fatalf("Result = %q, want ack", resp.Result)
+	}
+
+	sessions := h.Store.List()
+	if len(sessions) != 1 || sessions[0].Pubkey != clientPub {
+		t.Fatalf("Store.List() = %+v, want one Trusted Apps entry for %s", sessions, clientPub)
+	}
+	if len(sessions[0].Grants) != 0 {
+		t.Errorf("Grants = %+v, want empty -- Approve Once must remember none of the connect's requested perms", sessions[0].Grants)
+	}
+	// Prove it end to end: a later sign_event, even a non-sensitive kind the
+	// perms named, must still Ask rather than be silently allowed.
+	if got := h.Store.Decide(clientPub, nip46.MethodSignEvent, 1); got != Ask {
+		t.Errorf("Decide(sign_event kind 1) after Approve Once = %v, want Ask", got)
+	}
+}
+
+// TestHandle_Connect_Always_RemembersRequestedPerms is the other half: an
+// explicit "Always" (Resolve with remembered=true) DOES turn the requested
+// perms into standing grants -- the human saw the scope (see
+// TestHandle_Connect_SurfacesRequestedPerms) and chose to grant it.
+func TestHandle_Connect_Always_RemembersRequestedPerms(t *testing.T) {
+	h, signerPub, clientPub := newTestHandler(t)
+	h.SetPendingSecret("s3cr3t")
+	req := buildRequest(t, signerPub, nip46.MethodConnect, []string{signerPub, "s3cr3t", "sign_event:1,nip44_decrypt"})
+
+	done := make(chan *nip01.Event, 1)
+	go func() { done <- h.Handle(req, nip46.EncryptionNIP04) }()
+
+	waitFor(t, func() bool { return len(h.Queue.List()) == 1 })
+	pending := h.Queue.List()[0]
+	if err := h.Queue.Resolve(pending.ID, Allow, true); err != nil { // "Always"
+		t.Fatal(err)
+	}
+	if resp := parseResponse(t, <-done); resp.Result != "ack" {
+		t.Fatalf("Result = %q, want ack", resp.Result)
+	}
+
+	// The non-sensitive scope the app asked for is now standing. (Kind 1 and
+	// nip44_decrypt deliberately: sensitive kinds are covered separately and
+	// never auto-allowed regardless of the grant -- see policy_test.go.)
+	if got := h.Store.Decide(clientPub, nip46.MethodSignEvent, 1); got != Allow {
+		t.Errorf("Decide(sign_event kind 1) after Always = %v, want Allow", got)
+	}
+	if got := h.Store.Decide(clientPub, nip46.MethodNIP44Decrypt, 0); got != Allow {
+		t.Errorf("Decide(nip44_decrypt) after Always = %v, want Allow", got)
+	}
+}
+
 // TestHandle_Connect_WithPendingGrantSpec_SkipsApprovalQueue guards the
 // fix `ncli bunker connect --grants <file>` needs to actually be
 // unattended-usable: without it, "connect" itself would still go through

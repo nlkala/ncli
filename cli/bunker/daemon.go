@@ -619,8 +619,20 @@ func (d *Daemon) InitiateNostrconnectWithGrants(ctx context.Context, schema *nip
 	// Grants the URI itself asked for, then whatever --grants staged. The
 	// spec file is the operator's own instruction, so it is applied second
 	// and wins where the two overlap.
+	//
+	// The nostrconnect:// direction has no approval dialog at all -- running
+	// `ncli bunker connect <uri>` is the only approval, and it never showed
+	// what scope the URI's embedded perms claim. So before those perms
+	// become standing grants, surface them in the activity log the operator
+	// and the board both see: at minimum the embedded scope is disclosed,
+	// never applied silently.
 	now := time.Now()
-	for _, g := range parsePerms(schema.Perms, now) {
+	reqPerms := parsePerms(schema.Perms, now)
+	if len(reqPerms) > 0 {
+		d.log("nostrconnect pairing with %s is granting the perms embedded in its URI: %s",
+			d.cfg.Store.Label(schema.ClientPublickey), schema.Perms)
+	}
+	for _, g := range reqPerms {
 		_ = d.cfg.Store.Remember(schema.ClientPublickey, g)
 	}
 	if spec != nil {

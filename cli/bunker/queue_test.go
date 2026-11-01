@@ -13,7 +13,7 @@ func TestQueue_AddResolve(t *testing.T) {
 
 	done := make(chan Decision, 1)
 	go func() {
-		verdict, err := q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1})
+		verdict, _, err := q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1})
 		if err != nil {
 			t.Errorf("Add() error = %v", err)
 		}
@@ -37,6 +37,41 @@ func TestQueue_AddResolve(t *testing.T) {
 	}
 }
 
+// TestQueue_AddReturnsRemembered guards the signal Handler.pair depends on to
+// tell an explicit "Always" from an "Approve Once": Resolve's remembered flag
+// must come back out through Add's return, not be dropped on the floor.
+func TestQueue_AddReturnsRemembered(t *testing.T) {
+	for _, remembered := range []bool{true, false} {
+		q := NewQueue(0, 0)
+		type result struct {
+			verdict    Decision
+			remembered bool
+		}
+		done := make(chan result, 1)
+		go func() {
+			v, r, err := q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "connect"})
+			if err != nil {
+				t.Errorf("Add() error = %v", err)
+			}
+			done <- result{v, r}
+		}()
+
+		waitFor(t, func() bool { return len(q.List()) == 1 })
+		if err := q.Resolve("req-1", Allow, remembered); err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+
+		select {
+		case got := <-done:
+			if got.verdict != Allow || got.remembered != remembered {
+				t.Errorf("Add() = (%v, %v), want (Allow, %v)", got.verdict, got.remembered, remembered)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Add() never returned")
+		}
+	}
+}
+
 // TestQueue_OnAdded_FiresOnceOnAdd guards the callback board.go's
 // PendingTable/ipc_server.go rely on for live-update pushes: it must fire
 // exactly once, with the enqueued Pending, from Add -- not from the
@@ -52,11 +87,11 @@ func TestQueue_OnAdded_FiresOnceOnAdd(t *testing.T) {
 		got = append(got, p)
 	})
 
-	go func() { _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
 
 	// A duplicate Add for the same ID must not fire OnAdded again.
-	go func() { _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"}) }()
 	time.Sleep(20 * time.Millisecond)
 
 	mu.Lock()
@@ -75,7 +110,7 @@ func TestQueue_OnResolved_FiresFromResolve(t *testing.T) {
 	var got *ResolvedEvent
 	q.OnResolved(func(ev ResolvedEvent) { got = &ev })
 
-	go func() { _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1}) }()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
 
 	if err := q.Resolve("req-1", Deny, true); err != nil {
@@ -110,7 +145,7 @@ func TestQueue_OnResolvedCompletesBeforeAddUnblocks(t *testing.T) {
 
 	sawOnResolvedByAddTime := make(chan bool, 1)
 	go func() {
-		_, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"})
+		_, _, _ = q.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "ping"})
 		sawOnResolvedByAddTime <- onResolvedCalled.Load()
 	}()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
@@ -141,7 +176,7 @@ func TestQueue_OnResolved_FiresFromExpirySweep(t *testing.T) {
 	var got *ResolvedEvent
 	q.OnResolved(func(ev ResolvedEvent) { got = &ev })
 
-	go func() { _, _ = q.Add(Pending{ID: "req-exp", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-exp", ClientKey: "app1", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
 
 	fc.Advance(time.Hour)
@@ -164,7 +199,7 @@ func TestQueue_DuplicateRequestID_NoDoubleEnqueue(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			v, err := q.Add(Pending{ID: "req-dup", ClientKey: "app1", Method: "ping"})
+			v, _, err := q.Add(Pending{ID: "req-dup", ClientKey: "app1", Method: "ping"})
 			if err != nil {
 				t.Errorf("Add() error = %v", err)
 			}
@@ -199,7 +234,7 @@ func TestQueue_DuplicateRequestID_NoDoubleEnqueue(t *testing.T) {
 // keep this from hanging forever).
 func TestQueue_LateDuplicateAfterResolve_GetsCachedVerdict(t *testing.T) {
 	q := NewQueue(0, 0)
-	go func() { _, _ = q.Add(Pending{ID: "req-late", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-late", ClientKey: "app1", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
 
 	if err := q.Resolve("req-late", Allow, false); err != nil {
@@ -208,7 +243,7 @@ func TestQueue_LateDuplicateAfterResolve_GetsCachedVerdict(t *testing.T) {
 
 	done := make(chan Decision, 1)
 	go func() {
-		v, err := q.Add(Pending{ID: "req-late", ClientKey: "app1", Method: "ping"})
+		v, _, err := q.Add(Pending{ID: "req-late", ClientKey: "app1", Method: "ping"})
 		if err != nil {
 			t.Errorf("Add() error = %v", err)
 		}
@@ -234,7 +269,7 @@ func TestQueue_ResolveUnknown(t *testing.T) {
 
 func TestQueue_ResolveRace_ExactlyOnce(t *testing.T) {
 	q := NewQueue(0, 0)
-	go func() { _, _ = q.Add(Pending{ID: "req-race", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "req-race", ClientKey: "app1", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
 
 	var wg sync.WaitGroup
@@ -263,11 +298,11 @@ func TestQueue_ResolveRace_ExactlyOnce(t *testing.T) {
 
 func TestQueue_Full(t *testing.T) {
 	q := NewQueue(2, 0)
-	go func() { _, _ = q.Add(Pending{ID: "r1", ClientKey: "app1", Method: "ping"}) }()
-	go func() { _, _ = q.Add(Pending{ID: "r2", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "r1", ClientKey: "app1", Method: "ping"}) }()
+	go func() { _, _, _ = q.Add(Pending{ID: "r2", ClientKey: "app1", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(q.List()) == 2 })
 
-	if _, err := q.Add(Pending{ID: "r3", ClientKey: "app1", Method: "ping"}); err != ErrQueueFull {
+	if _, _, err := q.Add(Pending{ID: "r3", ClientKey: "app1", Method: "ping"}); err != ErrQueueFull {
 		t.Errorf("Add() beyond capacity error = %v, want ErrQueueFull", err)
 	}
 }
@@ -279,7 +314,7 @@ func TestQueue_ExpirySweep_SendsRealResponse(t *testing.T) {
 
 	done := make(chan Decision, 1)
 	go func() {
-		v, _ := q.Add(Pending{ID: "req-exp", ClientKey: "app1", Method: "sign_event", Kind: 1})
+		v, _, _ := q.Add(Pending{ID: "req-exp", ClientKey: "app1", Method: "sign_event", Kind: 1})
 		done <- v
 	}()
 	waitFor(t, func() bool { return len(q.List()) == 1 })
@@ -308,7 +343,7 @@ func TestQueue_Run_SweepsOnTicker(t *testing.T) {
 
 	done := make(chan Decision, 1)
 	go func() {
-		v, _ := q.Add(Pending{ID: "req-run", ClientKey: "app1", Method: "ping"})
+		v, _, _ := q.Add(Pending{ID: "req-run", ClientKey: "app1", Method: "ping"})
 		done <- v
 	}()
 

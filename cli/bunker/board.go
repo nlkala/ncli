@@ -1020,11 +1020,17 @@ func (t *PendingTable) openApprovalDialog(p Pending) {
 	}
 
 	if p.Method == nip46.MethodSignEvent {
-		kind := p.Kind
-		buttons = append(buttons, fmt.Sprintf("Always: kind %d", kind))
-		funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, &kind) }) })
-
+		// A sensitive kind (0/3/5) can never be remembered as an Allow -- it
+		// always requires per-request consent (see policy.go's Grant.matches)
+		// -- so offer no "Always" for it at all, rather than a button that
+		// would claim to remember a grant the signer will silently ignore.
+		// "Approve Once" is the only approve path for those. A non-sensitive
+		// kind gets both the exact-kind and any-kind "Always" options.
 		if !sensitiveKinds[p.Kind] {
+			kind := p.Kind
+			buttons = append(buttons, fmt.Sprintf("Always: kind %d", kind))
+			funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, &kind) }) })
+
 			buttons = append(buttons, "Always: any kind")
 			funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, nil) }) })
 		}
@@ -1053,25 +1059,69 @@ func (t *PendingTable) openApprovalDialog(p Pending) {
 	// Event was added to Pending) -- falls back to the plain dialog rather
 	// than showing an empty JSON view in that unreachable-in-practice case.
 	if p.Method == nip46.MethodSignEvent && p.Event != nil {
-		t.openSignEventApprovalDialog(p, title, text, buttons, funcs)
+		t.openScopeApprovalDialog("signEventApproval", title, text, tui.ColorizeEventJSON(p.Event), buttons, funcs)
+		return
+	}
+
+	// A connect's requested permission scope is shown the same way, so the
+	// human sees exactly what they are about to grant instead of a bare
+	// "wants to: connect" -- the whole point of the per-request-consent
+	// model (see Pending.Perms). Falls through to the plain dialog for a
+	// connect that asked for no perms at all (p.Perms == "").
+	if p.Method == nip46.MethodConnect && p.Perms != "" {
+		scope := "This app is requesting these permissions:\n\n" + describePerms(p.Perms)
+		t.openScopeApprovalDialog("connectApproval", title, text, scope, buttons, funcs)
 		return
 	}
 
 	t.app.ShowDialog(title, text, tcell.ColorDefault, buttons, funcs...)
 }
 
-// openSignEventApprovalDialog is openApprovalDialog's sign_event variant:
+// describePerms renders a connect request's raw perms string
+// ("sign_event,sign_event:0,nip44_decrypt") as a human-readable, one-per-line
+// scope list for the approval overlay, flagging the sensitive sign_event
+// kinds (0/3/5 -- identity, contacts, deletion) a human most needs to spot
+// before granting. It describes exactly what the app asked for, including any
+// entry this signer would not actually grant -- the point is honest
+// disclosure of the request, not a pre-filtered view of it.
+func describePerms(perms string) string {
+	var b strings.Builder
+	n := 0
+	for _, entry := range strings.Split(perms, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		n++
+		line := "- " + entry
+		method, param, hasParam := strings.Cut(entry, ":")
+		if strings.TrimSpace(method) == nip46.MethodSignEvent && hasParam {
+			if k, err := strconv.Atoi(strings.TrimSpace(param)); err == nil && sensitiveKinds[k] {
+				line += "   [sensitive kind]"
+			}
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if n == 0 {
+		return "(none requested)"
+	}
+	return b.String()
+}
+
+// openScopeApprovalDialog is openApprovalDialog's scope-disclosing variant:
 // same title/text/buttons/funcs computed there, laid out as a custom
 // ShowOverlay (Form-based, mirroring showBunkerURI/openNostrconnectInput)
-// with the unsigned event's JSON displayed above the button row instead of
-// ShowDialog's fixed Modal, which has no room for arbitrary content.
-// Buttons dismiss this overlay before running their func, not after (unlike
-// ShowDialog's own wrapper) -- so any of them (e.g. openDurationDialog) can
-// safely open a follow-up dialog/overlay of its own synchronously, the same
-// "Form's own button handler, no wrapper" case deferFollowUpDialog's own
-// doc comment carves out.
-func (t *PendingTable) openSignEventApprovalDialog(p Pending, title, text string, buttons []string, funcs []func()) {
-	const overlayKey = "signEventApproval"
+// with body (the request's exact scope -- a sign_event's unsigned event JSON,
+// or a connect's requested permission list) displayed above the button row
+// instead of ShowDialog's fixed Modal, which has no room for arbitrary
+// content. overlayKey distinguishes the two callers so neither leaks the
+// other's overlay. Buttons dismiss this overlay before running their func,
+// not after (unlike ShowDialog's own wrapper) -- so any of them (e.g.
+// openDurationDialog) can safely open a follow-up dialog/overlay of its own
+// synchronously, the same "Form's own button handler, no wrapper" case
+// deferFollowUpDialog's own doc comment carves out.
+func (t *PendingTable) openScopeApprovalDialog(overlayKey, title, text, body string, buttons []string, funcs []func()) {
 	dismiss := func() { t.app.DismissOverlay(overlayKey) }
 
 	jsonView := tview.NewTextView().
@@ -1079,7 +1129,7 @@ func (t *PendingTable) openSignEventApprovalDialog(p Pending, title, text string
 		SetWordWrap(true).
 		SetScrollable(true)
 	jsonView.SetBorderPadding(0, 0, 0, 0)
-	_, _ = fmt.Fprint(jsonView, tui.ColorizeEventJSON(p.Event))
+	_, _ = fmt.Fprint(jsonView, body)
 	jsonView.ScrollToBeginning()
 
 	form := tview.NewForm().

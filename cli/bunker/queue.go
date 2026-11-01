@@ -37,6 +37,14 @@ type Pending struct {
 	Method    string
 	Kind      int // only meaningful for Method == "sign_event"
 	Params    []string
+	// Perms is the permission list a connect asked for, raw
+	// ("sign_event:1,nip44_encrypt") -- only meaningful for
+	// Method == "connect", empty otherwise. This, NOT Params, is what the
+	// approval surfaces display: a connect's Params[1] is the pairing
+	// secret, so the raw Params must never be shown, but the requested
+	// scope has to be seen before it is granted (see board.go's connect
+	// scope view and pending.go's pendingView). A request, not a grant.
+	Perms     string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Event     *nip01.Event // the raw sign_event target, if Method == "sign_event" -- nil otherwise, for display
@@ -46,7 +54,13 @@ type Pending struct {
 // decision (Queue.Resolve) or by the expiry sweep.
 type resolution struct {
 	verdict Decision
-	expired bool
+	// remembered is true when the human decision also persisted a Store
+	// grant (an explicit "Always", not an "Approve Once") -- threaded back
+	// out through Add so the caller can tell a one-time approval apart from
+	// a standing one. Only meaningful for an Allow verdict; always false for
+	// an expiry sweep.
+	remembered bool
+	expired    bool
 }
 
 // ResolvedEvent is delivered to Queue.OnResolved for every request that
@@ -157,17 +171,18 @@ func (q *Queue) OnResolved(fn func(ResolvedEvent)) {
 }
 
 // Add enqueues a new pending request and blocks until it's resolved (by
-// Resolve or by expiry), returning the verdict. Duplicate request IDs
-// (the same NIP-46 request resent, or maliciously replayed) never
-// double-enqueue or trigger a second independent decision: the second
-// Add call for an ID already pending just waits on the same entry's
-// resolution instead of creating a new one.
-func (q *Queue) Add(p Pending) (Decision, error) {
+// Resolve or by expiry), returning the verdict and whether the decision also
+// persisted a Store grant (remembered -- an explicit "Always" rather than an
+// "Approve Once"; see Resolve). Duplicate request IDs (the same NIP-46
+// request resent, or maliciously replayed) never double-enqueue or trigger a
+// second independent decision: the second Add call for an ID already pending
+// just waits on the same entry's resolution instead of creating a new one.
+func (q *Queue) Add(p Pending) (Decision, bool, error) {
 	q.mu.Lock()
 	if existing, ok := q.byID[p.ID]; ok {
 		q.mu.Unlock()
 		<-existing.done
-		return existing.result.verdict, nil
+		return existing.result.verdict, existing.result.remembered, nil
 	}
 	pendingCount := 0
 	for _, e := range q.byID {
@@ -177,7 +192,7 @@ func (q *Queue) Add(p Pending) (Decision, error) {
 	}
 	if pendingCount >= q.max {
 		q.mu.Unlock()
-		return Ask, ErrQueueFull
+		return Ask, false, ErrQueueFull
 	}
 
 	now := q.now()
@@ -193,7 +208,7 @@ func (q *Queue) Add(p Pending) (Decision, error) {
 	}
 
 	<-e.done
-	return e.result.verdict, nil
+	return e.result.verdict, e.result.remembered, nil
 }
 
 // Resolve records a human decision for id, waking whichever Add call(s)
@@ -216,7 +231,7 @@ func (q *Queue) Resolve(id string, verdict Decision, remembered bool) error {
 	onResolved := q.onResolved
 	q.mu.Unlock()
 
-	e.result = resolution{verdict: verdict}
+	e.result = resolution{verdict: verdict, remembered: remembered}
 	// onResolved before close(e.done), deliberately: close(e.done) is what
 	// wakes the goroutine blocked in Add (Handle, still running the
 	// original request) to go on and act on the verdict -- for an
