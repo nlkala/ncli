@@ -206,8 +206,12 @@ func resolvePending(cmd *cobra.Command, id string, verdict Decision) error {
 				k := p.Kind
 				kind = &k
 			}
-			if kind == nil && p.Method == nip46.MethodSignEvent && sensitiveKinds[p.Kind] {
-				return common.InvalidInputError(cmd, fmt.Sprint(p.Kind), fmt.Errorf("kind %d is sensitive; it can only be granted on its own, not with --any-kind", p.Kind))
+			// A sensitive kind (0/3/5) can never be remembered as an Allow --
+			// it always requires per-request consent (see policy.go's
+			// Grant.matches) -- so --always on one is refused outright rather
+			// than silently storing a grant the signer will ignore.
+			if p.Method == nip46.MethodSignEvent && sensitiveKinds[p.Kind] {
+				return common.InvalidInputError(cmd, fmt.Sprint(p.Kind), fmt.Errorf("kind %d is sensitive and must be approved per-request; it cannot be remembered with --always", p.Kind))
 			}
 			switch {
 			case forDur > 0:

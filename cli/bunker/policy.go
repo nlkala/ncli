@@ -35,10 +35,14 @@ func (d Decision) String() string {
 	}
 }
 
-// sensitiveKinds are never covered by an any-kind grant -- only a grant that
-// names one of them explicitly. Metadata (0), contacts (3), and deletion
-// (5): a broad "always allow sign_event" click must never start silently
-// covering identity or contact-list rewrites too.
+// sensitiveKinds are never silently signable under any remembered Allow
+// grant -- not an any-kind one, and (since the connect-consent fix) not even
+// one that names the exact kind. Metadata (0), contacts (3), and deletion
+// (5) always require explicit per-request consent, so neither a broad
+// "always allow sign_event" click nor a sign_event:0 slipped into a connect's
+// perms list can start silently rewriting identity/contacts or issuing
+// deletions. A Deny grant may still name them -- remembering a block is
+// always safe. See Grant.matches.
 var sensitiveKinds = map[int]bool{0: true, 3: true, 5: true}
 
 // Grant is one remembered permission for a client app (identified by its
@@ -65,24 +69,41 @@ func (g *Grant) expired(now time.Time) bool {
 	return g.ExpiresAt != nil && !now.Before(*g.ExpiresAt)
 }
 
-// matches reports whether g covers a request for method/kind -- an exact
-// match if g.Kind names a specific kind, or (for a nil/"any kind" grant) a
-// match for every kind except the always-sensitive ones, which only an
-// exact-kind grant may cover. The sensitive-kind exclusion only applies to
-// sign_event -- kind is meaningless for every other method (Handle always
-// passes 0 for them), so an any-scope "connect"/"ping"/... grant must
-// match unconditionally, not get blocked because 0 happens to also be
-// kind 0 (metadata)'s value.
+// matches reports whether g covers a request for method/kind. An exact-kind
+// grant (g.Kind set) matches only its own kind; a nil/"any kind" grant
+// matches every kind except the always-sensitive sign_event ones. The
+// sensitive sign_event kinds (0/3/5 -- identity, contacts, deletion) get
+// special treatment: an *Allow* grant never silently covers them, not even
+// one naming the exact kind, so signing metadata/contacts/deletions always
+// needs explicit per-request consent (a sign_event:0 remembered from a
+// connect's perms must not become a silent metadata-signing authority). A
+// Deny grant is unaffected -- remembering a block is always safe. The
+// sensitive rule is scoped to sign_event: kind is meaningless for every
+// other method (Handle always passes 0), so an any-scope
+// "connect"/"ping"/... grant still matches unconditionally, not blocked just
+// because 0 collides with kind 0 (metadata)'s value.
 func (g *Grant) matches(method string, kind int, exactOnly bool) bool {
 	if g.Method != method {
 		return false
 	}
 	if g.Kind != nil {
-		return *g.Kind == kind
+		if *g.Kind != kind {
+			return false
+		}
+		// An exact-kind Allow grant does NOT cover a sensitive sign_event
+		// kind (0/3/5), even though it names the kind exactly: those always
+		// require explicit per-request consent, so a sign_event:0 remembered
+		// from a connect's perms can't silently sign metadata. A Deny grant
+		// is still honored -- blocking is always safe to remember.
+		if g.Verdict == Allow && method == nip46.MethodSignEvent && sensitiveKinds[kind] {
+			return false
+		}
+		return true
 	}
 	if exactOnly {
 		return false
 	}
+	// A nil/"any kind" grant never covers a sensitive sign_event kind.
 	if method == nip46.MethodSignEvent && sensitiveKinds[kind] {
 		return false
 	}

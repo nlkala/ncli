@@ -79,16 +79,35 @@ func TestDecide_AnyKindGrant_ExcludesSensitiveKinds(t *testing.T) {
 	}
 }
 
-func TestDecide_ExactGrantOnSensitiveKindIsHonored(t *testing.T) {
+func TestDecide_ExactAllowGrantOnSensitiveKindStillAsks(t *testing.T) {
+	// The connect-consent fix: an exact-kind *Allow* grant naming a sensitive
+	// kind (0/3/5 -- identity, contacts, deletion) must NOT skip the prompt,
+	// even though it names the kind exactly. Those always require explicit
+	// per-request consent, so a sign_event:0 slipped into a connect's perms
+	// can never become a silent metadata-signing authority.
+	for _, k := range []int{0, 3, 5} {
+		s, fc := newTestStore(t)
+		if err := s.Remember("app1", GrantForever("sign_event", kindPtr(k), fc.Now())); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Decide("app1", "sign_event", k); got != Ask {
+			t.Errorf("exact Allow grant for sensitive kind %d = %v, want Ask", k, got)
+		}
+	}
+}
+
+func TestDecide_ExactDenyGrantOnSensitiveKindIsHonored(t *testing.T) {
+	// A Deny is always safe to remember, so an explicit deny naming a
+	// sensitive kind IS honored -- the sensitive-kind rule only blocks a
+	// silent Allow.
 	s, fc := newTestStore(t)
-	// An explicit, deliberate grant naming kind 0 IS honored -- the
-	// sensitive-kind guard only blocks an *any-kind* grant from silently
-	// covering it.
-	if err := s.Remember("app1", GrantForever("sign_event", kindPtr(0), fc.Now())); err != nil {
+	g := GrantForever("sign_event", kindPtr(0), fc.Now())
+	g.Verdict = Deny
+	if err := s.Remember("app1", g); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Decide("app1", "sign_event", 0); got != Allow {
-		t.Errorf("explicit kind-0 grant = %v, want Allow", got)
+	if got := s.Decide("app1", "sign_event", 0); got != Deny {
+		t.Errorf("exact Deny grant for sensitive kind 0 = %v, want Deny", got)
 	}
 }
 

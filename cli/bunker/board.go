@@ -1020,11 +1020,17 @@ func (t *PendingTable) openApprovalDialog(p Pending) {
 	}
 
 	if p.Method == nip46.MethodSignEvent {
-		kind := p.Kind
-		buttons = append(buttons, fmt.Sprintf("Always: kind %d", kind))
-		funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, &kind) }) })
-
+		// A sensitive kind (0/3/5) can never be remembered as an Allow -- it
+		// always requires per-request consent (see policy.go's Grant.matches)
+		// -- so offer no "Always" for it at all, rather than a button that
+		// would claim to remember a grant the signer will silently ignore.
+		// "Approve Once" is the only approve path for those. A non-sensitive
+		// kind gets both the exact-kind and any-kind "Always" options.
 		if !sensitiveKinds[p.Kind] {
+			kind := p.Kind
+			buttons = append(buttons, fmt.Sprintf("Always: kind %d", kind))
+			funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, &kind) }) })
+
 			buttons = append(buttons, "Always: any kind")
 			funcs = append(funcs, func() { deferFollowUpDialog(t.app, func() { t.openDurationDialog(p, nil) }) })
 		}
