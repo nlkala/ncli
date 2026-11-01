@@ -159,7 +159,12 @@ func (h *Handler) Authorize(_ context.Context, call *bunker.Call) error {
 		if h.OnAutoApproved != nil {
 			h.OnAutoApproved(Pending{ID: call.ID, ClientKey: peer, Method: call.Method, CreatedAt: time.Now()})
 		}
-		h.pair(call)
+		// Staging a GrantSpec (`ncli bunker connect --grants`) is itself an
+		// explicit, persistent pre-authorization of this one pairing -- not a
+		// "once" decision a human might make at the TUI -- so the requested
+		// perms are persisted here as before (persistReqPerms=true), on top
+		// of the operator's own staged spec.
+		h.pair(call, true)
 		return nil
 	}
 
@@ -178,34 +183,50 @@ func (h *Handler) Authorize(_ context.Context, call *bunker.Call) error {
 	if call.Event != nil {
 		kind = call.Event.Kind
 	}
+	// persistReqPerms gates whether a connect's own requested perms become
+	// permanent remembered grants: true only when a human made an explicit
+	// "Always" decision (Queue.Add reports remembered). An "Approve Once",
+	// an auto-approve from a standing grant, all leave it false -- the app
+	// still pairs, but the one-time approval remembers nothing, so every
+	// later request prompts again.
+	persistReqPerms := false
 	switch h.Store.Decide(peer, call.Method, kind) {
 	case Deny:
 		return nip46.Deny("rejected")
 	case Ask:
 		pending := Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Perms: call.Perms, Event: call.Event}
-		verdict, err := h.Queue.Add(pending)
+		verdict, remembered, err := h.Queue.Add(pending)
 		if err != nil {
 			return nip46.Deny("signer busy: " + err.Error())
 		}
 		if verdict != Allow {
 			return nip46.Deny("rejected")
 		}
+		persistReqPerms = remembered
 	case Allow:
 		if h.OnAutoApproved != nil {
 			h.OnAutoApproved(Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Perms: call.Perms, Event: call.Event, CreatedAt: time.Now()})
 		}
 	}
 	if call.Method == nip46.MethodConnect {
-		h.pair(call)
+		h.pair(call, persistReqPerms)
 	}
 	return nil
 }
 
 // pair registers an approved connect: the app's self-reported name/url (a
-// display hint only), the perms it asked for (still ruled on by
-// Store.Decide), then any staged GrantSpec. Best-effort: a disk hiccup
-// shouldn't fail the handshake itself.
-func (h *Handler) pair(call *bunker.Call) {
+// display hint only), then -- only when persistReqPerms is set -- the perms
+// it asked for as permanent grants, then any staged GrantSpec. Best-effort: a
+// disk hiccup shouldn't fail the handshake itself.
+//
+// persistReqPerms is the heart of making "Approve Once" actually once: the
+// client's requested perms are a request, not a grant, and turning them into
+// permanent GrantForever grants is only ever right after an explicit "Always"
+// decision. A one-time approval still calls pair (so the app is registered in
+// Trusted Apps and the connect succeeds) but with persistReqPerms=false, so
+// nothing is remembered and every later request still prompts. A staged
+// GrantSpec is the operator's own explicit instruction and is always applied.
+func (h *Handler) pair(call *bunker.Call, persistReqPerms bool) {
 	peer := call.Client
 	var name, url string
 	if call.Metadata != nil {
@@ -213,8 +234,10 @@ func (h *Handler) pair(call *bunker.Call) {
 	}
 	_ = h.Store.Pair(peer, name, url)
 	now := time.Now()
-	for _, g := range parsePerms(call.Perms, now) {
-		_ = h.Store.Remember(peer, g)
+	if persistReqPerms {
+		for _, g := range parsePerms(call.Perms, now) {
+			_ = h.Store.Remember(peer, g)
+		}
 	}
 	if spec := h.takePendingGrantSpec(); spec != nil {
 		for _, g := range spec.Resolve(now) {

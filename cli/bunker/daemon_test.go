@@ -1706,13 +1706,13 @@ func TestDaemon_History_RecordsFromQueueResolution(t *testing.T) {
 		Queue:        queue,
 	})
 
-	go func() { _, _ = queue.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1}) }()
+	go func() { _, _, _ = queue.Add(Pending{ID: "req-1", ClientKey: "app1", Method: "sign_event", Kind: 1}) }()
 	waitFor(t, func() bool { return len(queue.List()) == 1 })
 	if err := queue.Resolve("req-1", Allow, true); err != nil {
 		t.Fatal(err)
 	}
 
-	go func() { _, _ = queue.Add(Pending{ID: "req-2", ClientKey: "app2", Method: "ping"}) }()
+	go func() { _, _, _ = queue.Add(Pending{ID: "req-2", ClientKey: "app2", Method: "ping"}) }()
 	waitFor(t, func() bool { return len(queue.List()) == 1 })
 	if err := queue.Resolve("req-2", Deny, false); err != nil {
 		t.Fatal(err)
