@@ -37,6 +37,14 @@ type Pending struct {
 	Method    string
 	Kind      int // only meaningful for Method == "sign_event"
 	Params    []string
+	// Perms is the permission list a connect asked for, raw
+	// ("sign_event:1,nip44_encrypt") -- only meaningful for
+	// Method == "connect", empty otherwise. This, NOT Params, is what the
+	// approval surfaces display: a connect's Params[1] is the pairing
+	// secret, so the raw Params must never be shown, but the requested
+	// scope has to be seen before it is granted (see board.go's connect
+	// scope view and pending.go's pendingView). A request, not a grant.
+	Perms     string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 	Event     *nip01.Event // the raw sign_event target, if Method == "sign_event" -- nil otherwise, for display

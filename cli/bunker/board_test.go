@@ -145,6 +145,27 @@ func TestFormatRelayStatuses(t *testing.T) {
 	}
 }
 
+func TestDescribePerms(t *testing.T) {
+	got := describePerms("sign_event, sign_event:0 ,nip44_decrypt,")
+	for _, want := range []string{"sign_event", "sign_event:0", "nip44_decrypt"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("describePerms() = %q, missing %q", got, want)
+		}
+	}
+	// kind 0 (metadata) is a sensitive kind and must be flagged as such so a
+	// human spots it in the connect scope view.
+	if !strings.Contains(got, "[sensitive kind]") {
+		t.Errorf("describePerms() = %q, want kind 0 flagged sensitive", got)
+	}
+	// A non-sensitive sign_event kind is not flagged.
+	if strings.Contains(describePerms("sign_event:1"), "[sensitive kind]") {
+		t.Error("describePerms(sign_event:1) wrongly flagged a non-sensitive kind")
+	}
+	if got := describePerms(""); got != "(none requested)" {
+		t.Errorf("describePerms(%q) = %q, want (none requested)", "", got)
+	}
+}
+
 func TestHasPendingConnect(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -678,6 +699,40 @@ func TestPendingTableSignEventApprovalFallsBackWithoutEvent(t *testing.T) {
 	focus, _ := waitForAutoPromptFocus(t, app)
 	if focus == nil {
 		t.Fatal("expected the fallback Modal to hold focus")
+	}
+}
+
+// TestPendingTableConnectApprovalOverlayShowsPerms guards openApprovalDialog's
+// connect branch: a connect carrying a requested-permission scope (Perms)
+// must route to the same custom ShowOverlay scope view sign_event uses (so
+// the human sees what they're granting), not the bare "wants to: connect"
+// Modal -- and that overlay's buttons must still work. Same end-to-end proof
+// as the sign_event overlay test: firing the focused "Approve Once" button
+// and observing the fake client react is what shows the new code path is
+// wired through, since Modal and Form both delegate focus to a *tview.Button.
+func TestPendingTableConnectApprovalOverlayShowsPerms(t *testing.T) {
+	client := &fakePendingClient{pending: []Pending{{ID: "req-1", ClientKey: "abc", Method: nip46.MethodConnect, Perms: "sign_event:0,nip44_decrypt"}}}
+	app := tui.NewApp()
+	pt := NewPendingTable(app, client, true)
+	pt.Init(t.Context())
+
+	if pt.promptedID != "req-1" {
+		t.Fatalf("promptedID = %q, want %q", pt.promptedID, "req-1")
+	}
+
+	focus, _ := waitForAutoPromptFocus(t, app)
+	button, ok := focus.(*tview.Button)
+	if !ok {
+		t.Fatalf("GetFocus() = %T, want *tview.Button (the connect scope overlay's first button)", app.GetFocus())
+	}
+	if got := button.GetLabel(); got != "Approve Once" {
+		t.Fatalf("focused button label = %q, want %q", got, "Approve Once")
+	}
+
+	button.InputHandler()(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) { app.SetFocus(p) })
+
+	if client.approvedID != "req-1" {
+		t.Errorf("Approve was not called through the connect scope overlay's button, approvedID = %q", client.approvedID)
 	}
 }
 

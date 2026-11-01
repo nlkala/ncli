@@ -177,6 +177,37 @@ func TestHandle_Connect_GoesThroughApprovalQueueWhenNoGrant(t *testing.T) {
 	}
 }
 
+// TestHandle_Connect_SurfacesRequestedPerms guards the first half of the
+// NIP-46 connect-consent fix: a connect's requested permission scope
+// (Params[2]) must reach the Pending as Perms, since that -- never the raw
+// Params, whose [1] is the pairing secret -- is what the TUI/CLI approval
+// surfaces display so a human sees exactly what scope they are granting.
+func TestHandle_Connect_SurfacesRequestedPerms(t *testing.T) {
+	h, signerPub, clientPub := newTestHandler(t)
+	h.SetPendingSecret("s3cr3t")
+	perms := "sign_event,sign_event:0,nip44_decrypt"
+	req := buildRequest(t, signerPub, nip46.MethodConnect, []string{signerPub, "s3cr3t", perms})
+
+	done := make(chan *nip01.Event, 1)
+	go func() { done <- h.Handle(req, nip46.EncryptionNIP04) }()
+
+	waitFor(t, func() bool { return len(h.Queue.List()) == 1 })
+	pending := h.Queue.List()[0]
+	if pending.ClientKey != clientPub || pending.Method != nip46.MethodConnect {
+		t.Fatalf("pending = %+v, want connect from %s", pending, clientPub)
+	}
+	if pending.Perms != perms {
+		t.Errorf("pending.Perms = %q, want %q (the requested scope must be surfaced)", pending.Perms, perms)
+	}
+
+	if err := h.Queue.Resolve(pending.ID, Allow, false); err != nil {
+		t.Fatal(err)
+	}
+	if resp := parseResponse(t, <-done); resp.Result != "ack" {
+		t.Errorf("Result = %q, want ack", resp.Result)
+	}
+}
+
 // TestHandle_Connect_WithPendingGrantSpec_SkipsApprovalQueue guards the
 // fix `ncli bunker connect --grants <file>` needs to actually be
 // unattended-usable: without it, "connect" itself would still go through

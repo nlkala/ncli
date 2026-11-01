@@ -182,7 +182,7 @@ func (h *Handler) Authorize(_ context.Context, call *bunker.Call) error {
 	case Deny:
 		return nip46.Deny("rejected")
 	case Ask:
-		pending := Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Event: call.Event}
+		pending := Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Perms: call.Perms, Event: call.Event}
 		verdict, err := h.Queue.Add(pending)
 		if err != nil {
 			return nip46.Deny("signer busy: " + err.Error())
@@ -192,7 +192,7 @@ func (h *Handler) Authorize(_ context.Context, call *bunker.Call) error {
 		}
 	case Allow:
 		if h.OnAutoApproved != nil {
-			h.OnAutoApproved(Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Event: call.Event, CreatedAt: time.Now()})
+			h.OnAutoApproved(Pending{ID: call.ID, ClientKey: peer, Method: call.Method, Kind: kind, Params: call.Params, Perms: call.Perms, Event: call.Event, CreatedAt: time.Now()})
 		}
 	}
 	if call.Method == nip46.MethodConnect {

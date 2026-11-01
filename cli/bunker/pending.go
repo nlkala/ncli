@@ -15,11 +15,17 @@ import (
 
 // pendingView is one pending request as `bunker pending list` prints it.
 type pendingView struct {
-	ID        string       `json:"id"`
-	App       string       `json:"app"`
-	AppName   string       `json:"app_name,omitempty"`
-	Method    string       `json:"method"`
-	Kind      *int         `json:"kind,omitempty"`
+	ID      string `json:"id"`
+	App     string `json:"app"`
+	AppName string `json:"app_name,omitempty"`
+	Method  string `json:"method"`
+	Kind    *int   `json:"kind,omitempty"`
+	// Perms is the raw permission scope a connect asked for, surfaced so the
+	// operator sees exactly what `pending approve` would be consenting to
+	// before they run it -- only set for Method == "connect". Deliberately
+	// the parsed Perms, never the raw Params: a connect's Params[1] is the
+	// pairing secret (see Pending.Perms).
+	Perms     string       `json:"perms,omitempty"`
 	CreatedAt time.Time    `json:"created_at"`
 	ExpiresAt time.Time    `json:"expires_at"`
 	Event     *nip01.Event `json:"event,omitempty"`
@@ -65,7 +71,7 @@ they expire (5 minutes).`,
 			for _, p := range pending {
 				v := pendingView{
 					ID: p.ID, App: p.ClientKey, AppName: names[p.ClientKey], Method: p.Method,
-					CreatedAt: p.CreatedAt, ExpiresAt: p.ExpiresAt, Event: p.Event,
+					Perms: p.Perms, CreatedAt: p.CreatedAt, ExpiresAt: p.ExpiresAt, Event: p.Event,
 				}
 				if p.Method == nip46.MethodSignEvent {
 					k := p.Kind
@@ -96,7 +102,19 @@ they expire (5 minutes).`,
 				left := time.Until(v.ExpiresAt).Round(time.Second)
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", v.ID, app, v.Method, kind, left)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			// A connect's requested permission scope is exactly what an
+			// `approve --always` would grant permanently, so it has to be
+			// visible before the operator decides -- the table can't carry a
+			// comma-list cleanly, so disclose it beneath the table instead.
+			for _, v := range views {
+				if v.Perms != "" {
+					fmt.Printf("\n%s requested permissions: %s\n", v.ID, v.Perms)
+				}
+			}
+			return nil
 		},
 	})
 
