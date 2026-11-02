@@ -6,6 +6,7 @@
 
 - Adds the signer's `nipoa_attest` method and `attest` rule (`subordinates`, a required `max_until`, `kinds`): an attestation is signed only when such a rule allows it, so existing policies refuse every one. `signer check --method nipoa_attest --subordinate --conditions` decides one offline.
 - Adds `ncli id attest`, which signs a NIP-OA owner attestation with `--identity` or through `--signer` and prints the `auth` tag, verified.
+- Adds the signer selector `tags_one`: the event must carry exactly one tag of each named key, with a listed value. Unlike `tags`, an event with a second same-named tag doesn't match, so a NIP-42 login can be bound to one relay. The example policies use it for `relay`.
 
 ## [0.8.0-rc.46]
 
