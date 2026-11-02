@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Adds the signer's `nipoa_attest` method and `attest` rule (`subordinates`, a required `max_until`, `kinds`): an attestation is signed only when such a rule allows it, so existing policies refuse every one. `signer check --method nipoa_attest --subordinate --conditions` decides one offline.
+- Adds `ncli id attest`, which signs a NIP-OA owner attestation with `--identity` or through `--signer` and prints the `auth` tag, verified.
+
 ## [0.8.0-rc.46]
 
 ### Fixed
