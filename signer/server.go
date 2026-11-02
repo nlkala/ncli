@@ -61,8 +61,10 @@ type Server struct {
 	consumed sync.Map // *nipLS.Request -> []string
 	// unwrap carries an unwrap_from decision from authorize to the result
 	// check; record drops it if the request failed before that.
-	unwrap sync.Map // *nipLS.Request -> Decision
-	logMu  sync.Mutex
+	unwrap sync.Map // *nipLS.Request -> unwrapCheck
+	// refused remembers the wraps unwrap_from rules refused.
+	refused refusedWraps
+	logMu   sync.Mutex
 }
 
 // New loads the policy and prepares a server. It does not listen.
@@ -116,7 +118,7 @@ func New(cfg Config) (*Server, error) {
 		Guard:      cfg.GuardExtra,
 		AllowUIDs:  cfg.AllowUIDs,
 		AllowGIDs:  cfg.AllowGIDs,
-		Methods:    map[string]nipLS.Handler{MethodStatus: s.status},
+		Methods:    map[string]nipLS.Handler{MethodStatus: s.status, MethodAttest: s.attest},
 		OnDecision: s.record,
 		Now:        cfg.Now,
 	})
@@ -171,11 +173,27 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	return s.ls.Serve(ctx, l)
 }
 
+// unwrapCheck is an unwrap_from decision waiting for its result.
+type unwrapCheck struct {
+	d      Decision
+	policy *Policy
+	key    [32]byte
+}
+
 // authorize runs the YAML policy, the rate limit and attestation
 // consumption. nipLS calls it for sign_event under its sign lock, so
 // evaluate -> consume -> sign can't race.
+//
+// An unwrap_from rule is decided by its result: who sealed the wrap is
+// known only once it is decrypted. Its rate is charged then, in
+// AuthorizeResult, and only for a wrap the rule releases: a refused wrap
+// (not to us, not a seal, sealed by a sender the rule does not list)
+// never spends a token, so wraps anyone can address to the signer can't
+// starve the senders it listens to. A refused wrap is remembered and
+// refused again at once, with no decryption.
 func (s *Server) authorize(_ context.Context, req *nipLS.Request) error {
 	now := s.cfg.Now()
+	p := s.policy.Load()
 	d := Evaluate(Request{
 		Method:       req.Method,
 		Event:        req.Event,
@@ -185,7 +203,7 @@ func (s *Server) authorize(_ context.Context, req *nipLS.Request) error {
 		Now:          now,
 		StartTime:    s.started,
 		SignerPub:    s.pub,
-	}, s.policy.Load(), s.used.Has)
+	}, p, s.used.Has)
 	req.Rule = d.Rule
 	if !d.Allow {
 		if d.Rule != "" {
@@ -193,8 +211,22 @@ func (s *Server) authorize(_ context.Context, req *nipLS.Request) error {
 		}
 		return nipLS.Deny(d.Reason)
 	}
+	if d.UnwrapFrom != nil {
+		key := wrapKey(req.Counterpart, req.Ciphertext)
+		if s.refused.has(p, key) {
+			return nipLS.Denyf("rule %q: refused before: not a seal from a sender unwrap_from lists", d.Rule)
+		}
+		// An empty bucket would refuse whatever the wrap holds: don't
+		// decrypt it. Only released wraps take tokens, so this is the
+		// listed senders' own pace.
+		if d.Rate != nil && !s.limiter.Ready(d.Rule, *d.Rate, now) {
+			return nipLS.Denyf("rule %q: %s", d.Rule, RateLimitReason)
+		}
+		s.unwrap.Store(req, unwrapCheck{d: d, policy: p, key: key})
+		return nil
+	}
 	if d.Rate != nil && !s.limiter.Allow(d.Rule, *d.Rate, now) {
-		return nipLS.Deny("rate limit exceeded")
+		return nipLS.Deny(RateLimitReason)
 	}
 
 	var entries []UsedEntry
@@ -213,9 +245,6 @@ func (s *Server) authorize(_ context.Context, req *nipLS.Request) error {
 	if len(d.Consumed) > 0 {
 		s.consumed.Store(req, d.Consumed)
 	}
-	if d.UnwrapFrom != nil {
-		s.unwrap.Store(req, d)
-	}
 	return nil
 }
 
@@ -232,11 +261,54 @@ func (p serverPolicy) AuthorizeResult(_ context.Context, req *nipLS.Request, res
 	if !ok {
 		return nil
 	}
-	d := v.(Decision)
-	if reason := CheckUnwrapResult(d, result); reason != "" {
-		return nipLS.Denyf("rule %q: %s", d.Rule, reason)
+	u := v.(unwrapCheck)
+	if reason := CheckUnwrapResult(u.d, result); reason != "" {
+		p.s.refused.add(u.policy, u.key)
+		return nipLS.Denyf("rule %q: %s", u.d.Rule, reason)
+	}
+	if u.d.Rate != nil && !p.s.limiter.Allow(u.d.Rule, *u.d.Rate, p.s.cfg.Now()) {
+		return nipLS.Denyf("rule %q: %s", u.d.Rule, RateLimitReason)
 	}
 	return nil
+}
+
+// attest answers nipoa_attest. nipLS doesn't gate custom methods, so it
+// runs the policy, the rate limit and the decision log itself. It signs
+// only the NIP-OA preimage it builds from the subordinate key and the
+// conditions, never a digest the caller hands it.
+func (s *Server) attest(_ context.Context, req *nipLS.Request) (string, error) {
+	now := s.cfg.Now()
+	var sig string
+	err := func() error {
+		if len(req.Params) != 2 {
+			return nipLS.Invalid("nipoa_attest takes [subordinate pubkey, conditions]")
+		}
+		d := Evaluate(Request{
+			Method:      MethodAttest,
+			Subordinate: req.Params[0],
+			Conditions:  req.Params[1],
+			Now:         now,
+			SignerPub:   s.pub,
+		}, s.policy.Load(), s.used.Has)
+		req.Rule = d.Rule
+		if !d.Allow {
+			if d.Rule != "" {
+				return nipLS.Denyf("rule %q: %s", d.Rule, d.Reason)
+			}
+			return nipLS.Deny(d.Reason)
+		}
+		if d.Rate != nil && !s.limiter.Allow(d.Rule, *d.Rate, now) {
+			return nipLS.Deny("rate limit exceeded")
+		}
+		var err error
+		sig, err = SignAttestation(s.cfg.PrivKeyHex, req.Params[0], req.Params[1])
+		return err
+	}()
+	s.record(nipLS.Decision{Time: now, Request: req, Err: err})
+	if err != nil {
+		return "", err
+	}
+	return sig, nil
 }
 
 // Status is signer_status's result.
@@ -281,13 +353,16 @@ type Peer = nipLS.Peer
 // Record is one decision-log line. It never carries content or key
 // material.
 type Record struct {
-	Time         string   `json:"time"`
-	ReqID        string   `json:"req_id,omitempty"`
-	Method       string   `json:"method"`
-	Kind         *int     `json:"kind,omitempty"`
-	EventID      string   `json:"event_id,omitempty"`
-	Client       Peer     `json:"client"`
-	Counterpart  string   `json:"counterpart,omitempty"`
+	Time        string `json:"time"`
+	ReqID       string `json:"req_id,omitempty"`
+	Method      string `json:"method"`
+	Kind        *int   `json:"kind,omitempty"`
+	EventID     string `json:"event_id,omitempty"`
+	Client      Peer   `json:"client"`
+	Counterpart string `json:"counterpart,omitempty"`
+	// Subordinate and Conditions are a nipoa_attest request's params.
+	Subordinate  string   `json:"subordinate,omitempty"`
+	Conditions   string   `json:"conditions,omitempty"`
 	Decision     string   `json:"decision"`
 	Rule         string   `json:"rule,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
@@ -296,7 +371,12 @@ type Record struct {
 
 func (s *Server) record(d nipLS.Decision) {
 	req := d.Request
-	s.unwrap.Delete(req)
+	// An unwrap still waiting for its result failed before it: the wrap
+	// could not be decrypted (not addressed to the signer). Remember it.
+	if v, ok := s.unwrap.LoadAndDelete(req); ok && !d.Allowed() {
+		u := v.(unwrapCheck)
+		s.refused.add(u.policy, u.key)
+	}
 	r := Record{
 		Time:        d.Time.UTC().Format(time.RFC3339),
 		ReqID:       req.ID,
@@ -308,6 +388,9 @@ func (s *Server) record(d nipLS.Decision) {
 	}
 	if r.Method == "" {
 		r.Method = "connect"
+	}
+	if req.Method == MethodAttest && len(req.Params) == 2 {
+		r.Subordinate, r.Conditions = clip(req.Params[0]), clip(req.Params[1])
 	}
 	if req.Event != nil {
 		kind := req.Event.Kind
@@ -337,4 +420,13 @@ func (s *Server) record(d nipLS.Decision) {
 	if r.Decision == "deny" && s.cfg.Denials != nil {
 		_, _ = s.cfg.Denials.Write(line)
 	}
+}
+
+// clip bounds a caller-supplied string kept in the decision log.
+func clip(v string) string {
+	const max = 200
+	if len(v) > max {
+		return v[:max] + "…"
+	}
+	return v
 }

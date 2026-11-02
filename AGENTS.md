@@ -34,6 +34,7 @@ that priority order.
 | `ncli bunker pending list/approve/reject` / `ncli bunker sessions set-grant` | Everything the TUI decides, from a script: list requests awaiting a decision, approve or reject one by id (`--always` remembers it, with `--any-kind`, `--for <dur>` or `--uses <n>` like the TUI's buttons), or apply a `--grants` spec to an already-paired app |
 | `ncli signer serve` / `status` / `check` | Local policy signer on a unix socket: holds one key in memory and answers the NIP-46 method set as newline-delimited JSON (no relay, no encryption; socket permissions plus optional `--allow-uid`/`--allow-gid` authenticate). A `kind: signer-policy` file decides (default deny; selectors, `deny_matching`, rate limits, `require: attestations` such as a signed "approve <id>"; `unwrap_from` releases a decrypted gift wrap only when it holds a seal from a listed sender; `nip44_message_keys` must be named to be allowed). Built in: never signs its own key, never counts a self-signed or pre-start attestation, single-use attestations persisted in `--state-dir`. `status` probes it (exit 6 when down); `check` dry-runs a policy offline (exit 7 on any denial) |
 | `ncli id sign --signer` / `ncli publish --signer` | Sign through a socket signer: `bunker+unix:///abs/path.sock` (or `unix://`); `--signer` also takes an identity. `id sign --attestations <file>` passes events a policy requires. A policy denial is `auth` (exit 7). `publish` also logs in (NIP-42) with it, or with `--auth-signer`; `find`/`dump --auth-identity` and `apply --auth-signer` take the same forms plus `bunker://`, signing only the login |
+| `ncli nip98 <url> <method>` | Print a NIP-98 `Authorization` header for one HTTP request, signed with `--identity` or through `--signer` (whose policy decides which URLs); `--payload-file` binds the body, `--value` prints the value alone |
 | `ncli blossom upload/download/list/rm/mirror/report` | Client for the Blossom protocol (BUD-01..12): content-addressed blob storage authenticated with a Nostr identity |
 | `ncli blossom servers add/remove/list/discover` | Manage the default Blossom server list, optionally publishing/discovering it as a signed kind:10063 (BUD-03) event |
 | `ncli huddle list` | List the ephemeral transport rooms that currently have someone in them, with peer count and the protocol version each is pinned to — a room id is otherwise out-of-band knowledge, and `space join` on an unused one opens it rather than failing |
@@ -52,6 +53,7 @@ that priority order.
 | `ncli id relabel <identifier> <new-label>` | Rename a saved vault identity (by label, npub, hex, nprofile or nip-05) without supplying its key |
 | `ncli id rm <identifier>` | Remove a saved vault identity (by label, npub, hex, nprofile or nip-05), deleting the vault's copy of its key; confirms first, `--yes` required with `--json` or no terminal |
 | `ncli id delegate` | Mint a NIP-26 delegation token |
+| `ncli id attest <npub\|hex>` | Sign a NIP-OA owner attestation (`--until`, `--kind`) with `--identity` or through `--signer` (a socket signer's `nipoa_attest`, allowed only by an `attest` policy rule); prints the `["auth", attester, conditions, sig]` tag, verified |
 | `ncli id sign -e <events.json> -o <signed.json>` | Sign one or more unsigned events with a vault/nsec identity; `-e -`/`-o -` read stdin and print the signed events, so `ncli event new \| ncli id sign -e - -o - \| ncli publish -e -` works as a pipe |
 | `ncli decode <entity>` | Decode any NIP-19 bech32 entity (npub/nsec/note/nprofile/nevent/naddr), a NIP-CASH cash-token-family string, or a NIP-CW circlehub1... connection |
 | `ncli miner -e <event.yaml>` | Mine or check NIP-13 proof-of-work on an event |
@@ -69,7 +71,7 @@ Every command's actual result goes to **stdout only**; progress narration
 and errors go to **stderr** — so piping stdout into `jq` or a script's
 parser never picks up log noise. `--json` and `-q/--quiet` are global flags
 (declared once on the root command, available on every subcommand) rather
-than per-command. `id`, `id list`, `id import`, `id relabel`, `id rm`, `id sign`, `version`, `skills list`/`show`/`install`, `id delegate`, `relay
+than per-command. `id`, `id list`, `id import`, `id relabel`, `id rm`, `id sign`, `version`, `skills list`/`show`/`install`, `id delegate`, `id attest`, `nip98`, `relay
 status`/`index`/`jobs`/`verify`/`metrics token`, `relay members`/`invites`/`roles`, `ping`,
 `miner mine`/`check`, `publish`, `huddle list`, `space create`/
 `list`/`show`/`chat send`/`chat list`, `bunker`/`status`/`stop`/

@@ -132,7 +132,7 @@ Omit --relays to use the relays from "ncli prefs relays".`,
 			// (see cli/ncli/miner.go).
 			for _, r := range report.Results {
 				if r.Accepted {
-					fmt.Printf("published %s to %s\n", r.ID, r.Relay)
+					fmt.Printf("published %s to %s\n", r.ID, social.Inline(r.Relay))
 				} else {
 					fmt.Printf("failed %s to %s: %s\n", r.ID, social.Inline(r.Relay), social.Inline(r.Error))
 				}

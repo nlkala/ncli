@@ -61,6 +61,34 @@ func TestPrintFanoutReport_TextMode_NoURLDangling(t *testing.T) {
 	}
 }
 
+// TestPrintFanoutReport_EscapesServerText feeds control, newline and bidi
+// runes through the accepted-path server/URL (the server's own text) and
+// confirms none reach the terminal raw -- the OK branch escapes the same
+// way the failure branch always has.
+func TestPrintFanoutReport_EscapesServerText(t *testing.T) {
+	report := &fanoutReport{}
+	report.add(serverResult{
+		Item:   "f.txt",
+		Server: "https://s\x1b[31m.example",
+		OK:     true,
+		URL:    "https://s.example/‮evil\nname.png",
+	})
+
+	out := captureStdout(t, func() { printFanoutReport(false, report) })
+
+	if strings.ContainsAny(out, "\x1b‮") {
+		t.Errorf("accepted-path output leaked a raw control/bidi rune: %q", out)
+	}
+	// One result line plus the summary line = two newlines; a raw newline
+	// smuggled through the URL would make a third.
+	if strings.Count(out, "\n") != 2 {
+		t.Errorf("a hostile URL introduced a raw newline: %q", out)
+	}
+	if !strings.Contains(out, `\x1b`) || !strings.Contains(out, `\u202e`) {
+		t.Errorf("expected the hostile runes to survive as visible escapes, got: %q", out)
+	}
+}
+
 func testCmdWithServerFlag(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}

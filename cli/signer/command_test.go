@@ -145,6 +145,47 @@ func TestCheckCounterpart(t *testing.T) {
 	}
 }
 
+// An attestation is checked offline as the signer decides it: the
+// subordinate, the conditions' bound against max_until as of --now, never itself.
+func TestCheckAttest(t *testing.T) {
+	_, signerPub := key(t, "signer")
+	_, member := key(t, "member")
+	dir := t.TempDir()
+	policy := filepath.Join(dir, "policy.yaml")
+	_ = os.WriteFile(policy, []byte("kind: signer-policy\nrules:\n"+
+		"  - {name: attest, allow: {attest: {subordinates: [\"*\"], max_until: 90d}}}\n"+
+		"  - {name: everything-else, deny: {}}\n"), 0o600)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	until := func(d time.Duration) string { return "created_at<" + strconv.FormatInt(now.Add(d).Unix(), 10) }
+	check := func(extra ...string) (string, error) {
+		return execSigner(t, append([]string{"check", "--policy", policy, "--pubkey", signerPub, "--now", now.Format(time.RFC3339), "--method", "nipoa_attest"}, extra...)...)
+	}
+	out, err := check("--subordinate", member, "--conditions", until(7*24*time.Hour))
+	if err != nil || !strings.Contains(out, `"allow"`) || !strings.Contains(out, member) {
+		t.Fatalf("a week: %v\n%s", err, out)
+	}
+	for name, c := range map[string][]string{
+		"beyond max_until": {"--subordinate", member, "--conditions", until(91 * 24 * time.Hour)},
+		"no end":           {"--subordinate", member, "--conditions", ""},
+		"already passed":   {"--subordinate", member, "--conditions", until(-time.Hour)},
+		"itself":           {"--subordinate", signerPub, "--conditions", until(time.Hour)},
+		"bad conditions":   {"--subordinate", member, "--conditions", "created_at<soon"},
+	} {
+		if out, err := check(c...); common.ExitCode(err) != 7 {
+			t.Errorf("%s: exit %d, %v\n%s", name, common.ExitCode(err), err, out)
+		}
+	}
+	if _, err := check("--subordinate", member); common.ExitCode(err) != 2 {
+		t.Errorf("no --conditions: exit %d, %v", common.ExitCode(err), err)
+	}
+	if _, err := check("--subordinate", member, "--conditions", until(time.Hour), "--counterpart", member); common.ExitCode(err) != 2 {
+		t.Errorf("with --counterpart: exit %d, %v", common.ExitCode(err), err)
+	}
+	if _, err := execSigner(t, "check", "--policy", policy, "--pubkey", signerPub, "--method", "nip44_encrypt", "--counterpart", member, "--subordinate", member); common.ExitCode(err) != 2 {
+		t.Errorf("--subordinate outside nipoa_attest: exit %d, %v", common.ExitCode(err), err)
+	}
+}
+
 func TestCheckUnwrapFromAndMessageKeys(t *testing.T) {
 	_, signerPub := key(t, "signer")
 	_, friend := key(t, "friend")

@@ -95,6 +95,28 @@ A login the policy denies exits `7` with `reason: signer_refused`, and
 `detail` names the rule. Each login shows up as one `sign_event` kind
 22242 line in the decision log.
 
+### HTTP services (NIP-98)
+
+`ncli nip98 <url> <method>` signs one kind 27235 for that URL and method
+and prints `Authorization: Nostr <base64>` (`--value`: the value alone,
+`--json`: `header`, `value`, `pubkey`). `--payload-file` binds the request
+body (its SHA-256 in a `payload` tag; `-` reads stdin). Pin the rule to
+the services the agent may call:
+
+```yaml
+  - name: http-logins
+    allow: {kinds: [27235], tags: {u: ["https://api.example/*"]}}
+```
+
+```sh
+curl -H "$(ncli nip98 https://api.example/upload POST --payload-file body.json --signer bunker+unix:///run/signer/agent.sock)" \
+  --data-binary @body.json https://api.example/upload
+```
+
+Each header carries a random `salt` tag, so two in the same second differ
+and a server that refuses replays accepts both. A header is good for that
+exact URL and method for about a minute.
+
 - **URI forms.** `bunker+unix:///abs/path` is canonical, and
   `unix:///abs/path` also works. The path must be absolute.
 - **Choosing a signer.** `--signer` also accepts a plain identity, so
@@ -124,6 +146,8 @@ ncli signer check --policy policy.yaml -e events.json --pubkey npub1... --json
 ncli signer check --policy policy.yaml -e state.json --attestations approval.json \
   --pubkey npub1... --now 2026-10-08T12:00:00Z --start-time 2026-10-08T11:00:00Z
 ncli signer check --policy policy.yaml --method nip44_decrypt --counterpart npub1... --pubkey npub1...
+ncli signer check --policy policy.yaml --method nipoa_attest --subordinate npub1... \
+  --conditions 'created_at<1767225600' --pubkey npub1... --now 2026-10-08T12:00:00Z
 ```
 
 `check` cannot reproduce two things the live signer does:

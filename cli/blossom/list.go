@@ -14,6 +14,7 @@ import (
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/keyresolve"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nipB7"
@@ -113,7 +114,9 @@ address, and defaults to --identity's pubkey.`,
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "HASH\tSIZE\tTYPE\tUPLOADED\tURL")
 			for _, d := range descriptors {
-				_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", d.Sha256, d.Size, d.Type, time.Unix(d.Uploaded, 0).Format(time.RFC3339), d.URL)
+				// A BlobDescriptor is the server's JSON: its hash, MIME type and
+				// URL are all server-controlled text, escaped before printing.
+				_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", social.Inline(d.Sha256), d.Size, social.Inline(d.Type), time.Unix(d.Uploaded, 0).Format(time.RFC3339), social.Inline(d.URL))
 			}
 			_ = w.Flush()
 			return nil
