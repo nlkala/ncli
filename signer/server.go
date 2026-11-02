@@ -118,7 +118,7 @@ func New(cfg Config) (*Server, error) {
 		Guard:      cfg.GuardExtra,
 		AllowUIDs:  cfg.AllowUIDs,
 		AllowGIDs:  cfg.AllowGIDs,
-		Methods:    map[string]nipLS.Handler{MethodStatus: s.status},
+		Methods:    map[string]nipLS.Handler{MethodStatus: s.status, MethodAttest: s.attest},
 		OnDecision: s.record,
 		Now:        cfg.Now,
 	})
@@ -272,6 +272,45 @@ func (p serverPolicy) AuthorizeResult(_ context.Context, req *nipLS.Request, res
 	return nil
 }
 
+// attest answers nipoa_attest. nipLS doesn't gate custom methods, so it
+// runs the policy, the rate limit and the decision log itself. It signs
+// only the NIP-OA preimage it builds from the subordinate key and the
+// conditions, never a digest the caller hands it.
+func (s *Server) attest(_ context.Context, req *nipLS.Request) (string, error) {
+	now := s.cfg.Now()
+	var sig string
+	err := func() error {
+		if len(req.Params) != 2 {
+			return nipLS.Invalid("nipoa_attest takes [subordinate pubkey, conditions]")
+		}
+		d := Evaluate(Request{
+			Method:      MethodAttest,
+			Subordinate: req.Params[0],
+			Conditions:  req.Params[1],
+			Now:         now,
+			SignerPub:   s.pub,
+		}, s.policy.Load(), s.used.Has)
+		req.Rule = d.Rule
+		if !d.Allow {
+			if d.Rule != "" {
+				return nipLS.Denyf("rule %q: %s", d.Rule, d.Reason)
+			}
+			return nipLS.Deny(d.Reason)
+		}
+		if d.Rate != nil && !s.limiter.Allow(d.Rule, *d.Rate, now) {
+			return nipLS.Deny("rate limit exceeded")
+		}
+		var err error
+		sig, err = SignAttestation(s.cfg.PrivKeyHex, req.Params[0], req.Params[1])
+		return err
+	}()
+	s.record(nipLS.Decision{Time: now, Request: req, Err: err})
+	if err != nil {
+		return "", err
+	}
+	return sig, nil
+}
+
 // Status is signer_status's result.
 type Status struct {
 	Version      string `json:"version,omitempty"`
@@ -314,13 +353,16 @@ type Peer = nipLS.Peer
 // Record is one decision-log line. It never carries content or key
 // material.
 type Record struct {
-	Time         string   `json:"time"`
-	ReqID        string   `json:"req_id,omitempty"`
-	Method       string   `json:"method"`
-	Kind         *int     `json:"kind,omitempty"`
-	EventID      string   `json:"event_id,omitempty"`
-	Client       Peer     `json:"client"`
-	Counterpart  string   `json:"counterpart,omitempty"`
+	Time        string `json:"time"`
+	ReqID       string `json:"req_id,omitempty"`
+	Method      string `json:"method"`
+	Kind        *int   `json:"kind,omitempty"`
+	EventID     string `json:"event_id,omitempty"`
+	Client      Peer   `json:"client"`
+	Counterpart string `json:"counterpart,omitempty"`
+	// Subordinate and Conditions are a nipoa_attest request's params.
+	Subordinate  string   `json:"subordinate,omitempty"`
+	Conditions   string   `json:"conditions,omitempty"`
 	Decision     string   `json:"decision"`
 	Rule         string   `json:"rule,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
@@ -346,6 +388,9 @@ func (s *Server) record(d nipLS.Decision) {
 	}
 	if r.Method == "" {
 		r.Method = "connect"
+	}
+	if req.Method == MethodAttest && len(req.Params) == 2 {
+		r.Subordinate, r.Conditions = clip(req.Params[0]), clip(req.Params[1])
 	}
 	if req.Event != nil {
 		kind := req.Event.Kind
@@ -375,4 +420,13 @@ func (s *Server) record(d nipLS.Decision) {
 	if r.Decision == "deny" && s.cfg.Denials != nil {
 		_, _ = s.cfg.Denials.Write(line)
 	}
+}
+
+// clip bounds a caller-supplied string kept in the decision log.
+func clip(v string) string {
+	const max = 200
+	if len(v) > max {
+		return v[:max] + "…"
+	}
+	return v
 }

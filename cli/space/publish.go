@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/spf13/cobra"
@@ -45,9 +46,9 @@ func signAndPublish(ctx context.Context, cmd *cobra.Command, relayURL *url.URL, 
 		// Same stdout-only-holds-the-result convention as "ncli publish".
 		for _, r := range report.Results {
 			if r.Accepted {
-				fmt.Printf("published %s to %s\n", r.ID, r.Relay)
+				fmt.Printf("published %s to %s\n", r.ID, social.Inline(r.Relay))
 			} else {
-				fmt.Printf("failed %s to %s: %s\n", r.ID, r.Relay, r.Error)
+				fmt.Printf("failed %s to %s: %s\n", r.ID, social.Inline(r.Relay), social.Inline(r.Error))
 			}
 		}
 	}

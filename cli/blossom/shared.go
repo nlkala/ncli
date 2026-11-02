@@ -9,6 +9,7 @@ import (
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/keyresolve"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nipB7"
@@ -221,12 +222,13 @@ func printFanoutReport(jsonMode bool, report *fanoutReport) {
 	for _, r := range report.Results {
 		switch {
 		case r.OK && r.URL != "":
-			fmt.Printf("ok   %s -> %s: %s\n", r.Item, r.Server, r.URL)
+			// r.Server and r.URL are server-returned text, same as the fail path.
+			fmt.Printf("ok   %s -> %s: %s\n", r.Item, social.Inline(r.Server), social.Inline(r.URL))
 		case r.OK:
 			// rm has no URL to show -- only upload/mirror populate one.
-			fmt.Printf("ok   %s -> %s\n", r.Item, r.Server)
+			fmt.Printf("ok   %s -> %s\n", r.Item, social.Inline(r.Server))
 		default:
-			fmt.Printf("fail %s -> %s: %s\n", r.Item, r.Server, r.Error)
+			fmt.Printf("fail %s -> %s: %s\n", r.Item, social.Inline(r.Server), social.Inline(r.Error))
 		}
 	}
 	fmt.Printf("attempted %d, succeeded %d, failed %d\n", report.Attempted, report.Succeeded, report.Failed)

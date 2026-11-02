@@ -9,6 +9,7 @@ import (
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/dm"
 	"github.com/ohstr/ncli/cli/event"
+	"github.com/ohstr/ncli/cli/form"
 	"github.com/ohstr/ncli/cli/groups"
 	"github.com/ohstr/ncli/cli/huddle"
 	"github.com/ohstr/ncli/cli/ncli"
@@ -70,6 +71,12 @@ func init() {
 	// Register NIP-17 private messages ("dm") -- send/read/prove/verify,
 	// sealed and opened through a signer; see NewDMCommand.
 	ncli.RootCmd.AddCommand(dm.NewDMCommand())
+
+	// Register NIP-PF forms ("form") -- create/list/show/respond/withdraw/
+	// result: questions with recommended options, answered in one response
+	// and closed with a result, private (gift-wrapped), in a group or
+	// public; see NewFormCommand.
+	ncli.RootCmd.AddCommand(form.NewFormCommand())
 }
 
 func main() {

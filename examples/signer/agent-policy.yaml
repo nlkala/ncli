@@ -21,7 +21,7 @@ rules:
   - name: relay-auth
     allow:
       kinds: [22242]
-      tags: {relay: ["wss://relay.example", "wss://relay.example/*"]}
+      tags_one: {relay: ["wss://relay.example", "wss://relay.example/*"]}
 
   # NIP-98 HTTP auth, only for our git host.
   - name: http-auth
