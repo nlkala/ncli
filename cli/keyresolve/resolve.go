@@ -83,19 +83,65 @@ func ResolveVaultPassword(jsonMode bool, promptText string) (string, error) {
 	return PromptPassword(promptText)
 }
 
-// PromptPassword reads a password with echo disabled. This requires stdin
-// to be an actual terminal (it issues a termios ioctl); piped/non-
-// interactive stdin will error here -- only reached when --json is unset
-// and NCLI_VAULT_PASSWORD is unset, i.e. the deliberately-interactive-only
-// path (the same trade-off ssh-keygen/sudo make).
+// ErrNoTerminal is returned when a secret must be read interactively but
+// there is no terminal to read it from: neither the controlling terminal
+// (/dev/tty on Unix, CONIN$ on Windows) nor stdin is one. Its message names
+// the non-interactive paths instead of surfacing the cryptic "inappropriate
+// ioctl for device" a raw termios read on a pipe returns (issue #205).
+var ErrNoTerminal = errors.New("no terminal available for the password prompt; " +
+	"set NCLI_VAULT_PASSWORD, or sign from a file with `ncli id sign -e <file>`")
+
+// PromptPassword prints prompt to stdout and reads a password with echo
+// disabled. The read comes from the controlling terminal, not fd 0, so it
+// still prompts when stdin is a pipe feeding the command its input (e.g.
+// `ncli event new … | ncli publish -e - --signer <label>`) -- the same way
+// ssh-keygen/sudo read a passphrase. Only reached when --json is unset and
+// NCLI_VAULT_PASSWORD is unset, i.e. the deliberately-interactive path.
 func PromptPassword(prompt string) (string, error) {
 	fmt.Print(prompt)
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	pw, err := ReadSecretTTY()
 	fmt.Println()
 	if err != nil {
 		return "", err
 	}
-	return string(pw), nil
+	return pw, nil
+}
+
+// ReadSecretTTY reads one line with terminal echo disabled from the
+// controlling terminal rather than fd 0, and returns it. The caller prints
+// its own prompt first (to stdout or stderr); ReadSecretTTY prints nothing.
+// When the controlling terminal can't be opened it falls back to fd 0 only
+// if fd 0 is itself a terminal, and otherwise returns ErrNoTerminal rather
+// than letting a termios ioctl fail cryptically on a piped stdin.
+func ReadSecretTTY() (string, error) {
+	return readSecretTTY(openTTY, readPasswordFd, stdinIsTerminal)
+}
+
+// readSecretTTY is ReadSecretTTY's dependency-injected core, so the branch
+// selection can be unit-tested without a real terminal: openTTY opens the
+// controlling terminal, readFd reads an echo-disabled line from a terminal
+// fd, and stdinIsTerminal reports whether fd 0 is a terminal.
+func readSecretTTY(openTTY func() (*os.File, error), readFd func(int) (string, error), stdinIsTerminal func() bool) (string, error) {
+	if tty, err := openTTY(); err == nil {
+		defer func() { _ = tty.Close() }()
+		return readFd(int(tty.Fd()))
+	}
+	if stdinIsTerminal() {
+		return readFd(int(os.Stdin.Fd()))
+	}
+	return "", ErrNoTerminal
+}
+
+func readPasswordFd(fd int) (string, error) {
+	b, err := term.ReadPassword(fd)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func stdinIsTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // UnlockOrCreateVault returns the vault's own decrypted private key --
