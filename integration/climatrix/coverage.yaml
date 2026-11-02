@@ -82,6 +82,7 @@
 "huddle": {modes: [errors], tests: [TestBareGroupCommands]}
 "huddle list": {modes: [json, errors], tests: [TestSpaceAndHuddle]}
 "id": {modes: [json, errors], tests: [TestID, TestHarness_ActorsAreConsistent]}
+"id attest": {modes: [json, text, errors], tests: [TestAttest]}
 "id delegate": {modes: [json, tty, errors], tests: [TestIDDelegate, TestTTY_DelegateWizard]}
 "id import": {modes: [json, errors], tests: [TestIDImport]}
 "id list": {modes: [json], tests: [TestID]}
