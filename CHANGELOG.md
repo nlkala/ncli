@@ -11,6 +11,7 @@
 - Adds the `ncli-forms` skill.
 - Adds labels to `dm` and `form`: an event's `t` tags print as `#label` (printable ASCII, every other rune escaped) after the author and before the subject or title, and `dm send --label` sets them.
 - Adds `--auth` (and `NCLI_AUTH_TAG`) to every command that signs through `--signer`: a NIP-OA `auth` tag, checked against the signer's key, added to every event it signs whose kind and time its conditions allow -- on a DM's or a private form's rumor too, inside the seal; never on a seal, a gift wrap or a NIP-42 login event.
+- Adds the signer selector `tags_one`: the event must carry exactly one tag of each named key, with a listed value. Unlike `tags`, an event with a second same-named tag doesn't match, so a NIP-42 login can be bound to one relay. The example policies use it for `relay`.
 
 ### Changed
 

@@ -81,6 +81,11 @@ type Selector struct {
 	Kinds        []int               `json:"kinds,omitempty"`
 	Counterparts []string            `json:"counterparts,omitempty"`
 	Tags         map[string][]string `json:"tags,omitempty"`
+	// TagsOne: for every key, the event has exactly one tag of that name,
+	// and its value matches an entry (as in tags). Unlike tags, which match
+	// when any one of several same-named tags does, an event with a second
+	// tag of the name -- one listed, one not -- doesn't match.
+	TagsOne map[string][]string `json:"tags_one,omitempty"`
 	// UnwrapFrom allows nip44_decrypt from any counterpart (a gift wrap's
 	// one-time key) only when the result is a seal signed by one of these.
 	UnwrapFrom []string `json:"unwrap_from,omitempty"`
@@ -93,7 +98,7 @@ type Selector struct {
 }
 
 func (s *Selector) empty() bool {
-	return len(s.Methods) == 0 && len(s.Kinds) == 0 && len(s.Counterparts) == 0 && len(s.Tags) == 0 && len(s.UnwrapFrom) == 0 && s.Attest == nil
+	return len(s.Methods) == 0 && len(s.Kinds) == 0 && len(s.Counterparts) == 0 && len(s.Tags) == 0 && len(s.TagsOne) == 0 && len(s.UnwrapFrom) == 0 && s.Attest == nil
 }
 
 // Bind ties an attestation to the target event. Exactly one form is set:
@@ -356,8 +361,8 @@ func validateSelector(s *Selector) error {
 		}
 	}
 	if s.Attest != nil {
-		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 || len(s.UnwrapFrom) > 0 {
-			return errors.New("attest can't be combined with counterparts, kinds, tags or unwrap_from (an attestation's kinds go in attest.kinds)")
+		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 || len(s.TagsOne) > 0 || len(s.UnwrapFrom) > 0 {
+			return errors.New("attest can't be combined with counterparts, kinds, tags, tags_one or unwrap_from (an attestation's kinds go in attest.kinds)")
 		}
 		if len(s.Methods) == 0 {
 			s.Methods = []string{MethodAttest}
@@ -368,8 +373,8 @@ func validateSelector(s *Selector) error {
 		return nil
 	}
 	if len(s.UnwrapFrom) > 0 {
-		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 {
-			return errors.New("unwrap_from can't be combined with counterparts, kinds or tags")
+		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 || len(s.TagsOne) > 0 {
+			return errors.New("unwrap_from can't be combined with counterparts, kinds, tags or tags_one")
 		}
 		if len(s.Methods) == 0 {
 			s.Methods = []string{nip46.MethodNIP44Decrypt}
@@ -386,7 +391,7 @@ func validateSelector(s *Selector) error {
 			s.unwrapFrom[hexKey] = true
 		}
 	}
-	eventFields := len(s.Kinds) > 0 || len(s.Tags) > 0
+	eventFields := len(s.Kinds) > 0 || len(s.Tags) > 0 || len(s.TagsOne) > 0
 	if len(s.Methods) == 0 {
 		switch {
 		case eventFields && len(s.Counterparts) > 0:
@@ -409,6 +414,14 @@ func validateSelector(s *Selector) error {
 	for name, vals := range s.Tags {
 		if name == "" || len(vals) == 0 {
 			return fmt.Errorf("tags: %q needs at least one value", name)
+		}
+	}
+	for name, vals := range s.TagsOne {
+		if name == "" || len(vals) == 0 {
+			return fmt.Errorf("tags_one: %q needs at least one value", name)
+		}
+		if _, ok := s.Tags[name]; ok {
+			return fmt.Errorf("tags_one: %q is in tags too; name it in one of them", name)
 		}
 	}
 	if len(s.Counterparts) > 0 {

@@ -24,11 +24,12 @@ selector, unless serve/check runs with `--allow-catch-all`.
 | `methods` | all | the method is listed: `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `nip44_message_keys`, `nipoa_attest` |
 | `kinds` | `sign_event` | the event kind is listed |
 | `tags` | `sign_event` | for every key, some tag with that name has a first value matching an entry: exact, or a prefix when the entry ends in `*` |
+| `tags_one` | `sign_event` | for every key, the event has exactly one tag with that name, and its first value matches an entry (as in `tags`); a second tag of the name, listed or not, fails it |
 | `counterparts` | encrypt/decrypt | the peer pubkey (npub or hex) is listed |
 | `unwrap_from` | `nip44_decrypt` | any counterpart; the result is released only if it is a kind 13 seal that verifies, signed by a listed pubkey |
 | `attest` | `nipoa_attest` | the subordinate key is in `attest.subordinates` (npub/hex, or `"*"`); see [NIP-OA attestations](#nip-oa-attestations) |
 
-- **Default methods.** If `methods` is omitted, `kinds`/`tags` imply
+- **Default methods.** If `methods` is omitted, `kinds`/`tags`/`tags_one` imply
   `[sign_event]`, `counterparts` implies all four encrypt/decrypt
   methods (not `nip44_message_keys`, which must be named), and
   `unwrap_from` implies `[nip44_decrypt]`.
@@ -95,7 +96,7 @@ in as the signer's key on *any* relay or HTTP service. Pin them:
   - name: relay-auth
     allow:
       kinds: [22242]
-      tags: {relay: ["wss://relay.example", "wss://relay.example/*"]}
+      tags_one: {relay: ["wss://relay.example", "wss://relay.example/*"]}
   - name: http-auth
     allow:
       kinds: [27235]
@@ -105,6 +106,22 @@ in as the signer's key on *any* relay or HTTP service. Pin them:
 - **Exact host.** List the bare host exactly, *and* with `/*`. A bare
   prefix such as `wss://relay.example*` would also match
   `wss://relay.example.evil.example`.
+- **One relay tag.** Pin a login's `relay` with `tags_one`, not `tags`:
+  `tags` matches when *some* `relay` tag is listed, so a 22242 carrying
+  two -- yours and another relay's -- passes it, and a relay that takes
+  any of an event's `relay` tags accepts that login. `tags_one` takes
+  exactly one `relay` tag, and only a listed one. A key may sit in
+  `tags` or in `tags_one`, not both.
+- **A deny with `tags_one` is weaker than with `tags`.** `tags_one`
+  matches only an event with exactly one tag of the name, so a `deny`
+  written with it lets through an event that carries the denied value
+  *and* a second tag of the name (listed or not): the deny doesn't
+  match, and the next rule decides. To refuse a value wherever it
+  appears, deny with `tags`; keep `tags_one` for allows.
+- **Tag names are case-sensitive.** A name is compared byte for byte: a
+  rule on `t` doesn't see a `T` tag, nor a look-alike letter of another
+  script. A deny names one spelling only; to refuse what you didn't
+  foresee, allow a closed list and end with `deny: {}`.
 - **AND across keys.** All tag keys must match. In the example above,
   `method: DELETE` on the git host is denied.
 
