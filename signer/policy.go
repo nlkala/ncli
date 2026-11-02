@@ -47,6 +47,8 @@ var ruleMethods = map[string]bool{
 	nip46.MethodNIP44Decrypt: true,
 
 	nip46.MethodNIP44MessageKeys: true,
+
+	MethodAttest: true,
 }
 
 // Duration is a time.Duration written as a Go duration string ("15m").
@@ -82,13 +84,16 @@ type Selector struct {
 	// UnwrapFrom allows nip44_decrypt from any counterpart (a gift wrap's
 	// one-time key) only when the result is a seal signed by one of these.
 	UnwrapFrom []string `json:"unwrap_from,omitempty"`
+	// Attest selects NIP-OA attestation requests (method nipoa_attest);
+	// see AttestSelector.
+	Attest *AttestSelector `json:"attest,omitempty"`
 
 	counterparts map[string]bool
 	unwrapFrom   map[string]bool
 }
 
 func (s *Selector) empty() bool {
-	return len(s.Methods) == 0 && len(s.Kinds) == 0 && len(s.Counterparts) == 0 && len(s.Tags) == 0 && len(s.UnwrapFrom) == 0
+	return len(s.Methods) == 0 && len(s.Kinds) == 0 && len(s.Counterparts) == 0 && len(s.Tags) == 0 && len(s.UnwrapFrom) == 0 && s.Attest == nil
 }
 
 // Bind ties an attestation to the target event. Exactly one form is set:
@@ -274,6 +279,16 @@ func (p *Policy) validateRule(r *Rule, baseDir string, opts LoadOptions) error {
 	if err := validateSelector(sel); err != nil {
 		return err
 	}
+	if sel.Attest != nil {
+		if err := sel.Attest.validate(r.Allow != nil); err != nil {
+			return err
+		}
+		if len(r.DenyMatching) > 0 || r.Require != nil || r.MaxClockSkew != nil {
+			return errors.New("attest rules take only a selector and a rate")
+		}
+	} else if r.Allow != nil && containsString(sel.Methods, MethodAttest) {
+		return errors.New("nipoa_attest is allowed only by an attest selector: {attest: {subordinates, max_until}}")
+	}
 	if r.Deny != nil && len(sel.UnwrapFrom) > 0 {
 		return errors.New("unwrap_from only applies to allow rules")
 	}
@@ -337,8 +352,20 @@ func attLabel(a *AttestationSpec, i int) string {
 func validateSelector(s *Selector) error {
 	for _, m := range s.Methods {
 		if !ruleMethods[m] {
-			return fmt.Errorf("unknown method %q (want sign_event, nip04_encrypt, nip04_decrypt, nip44_encrypt, nip44_decrypt or nip44_message_keys)", m)
+			return fmt.Errorf("unknown method %q (want sign_event, nip04_encrypt, nip04_decrypt, nip44_encrypt, nip44_decrypt, nip44_message_keys or nipoa_attest)", m)
 		}
+	}
+	if s.Attest != nil {
+		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 || len(s.UnwrapFrom) > 0 {
+			return errors.New("attest can't be combined with counterparts, kinds, tags or unwrap_from (an attestation's kinds go in attest.kinds)")
+		}
+		if len(s.Methods) == 0 {
+			s.Methods = []string{MethodAttest}
+		}
+		if len(s.Methods) != 1 || s.Methods[0] != MethodAttest {
+			return errors.New("attest only applies to nipoa_attest")
+		}
+		return nil
 	}
 	if len(s.UnwrapFrom) > 0 {
 		if len(s.Counterparts) > 0 || len(s.Kinds) > 0 || len(s.Tags) > 0 {

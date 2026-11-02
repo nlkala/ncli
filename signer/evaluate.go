@@ -9,6 +9,7 @@ import (
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip46"
 	"github.com/ohstr/nmilat/nip59"
+	"github.com/ohstr/nmilat/nipOA"
 )
 
 // Request is everything a policy decision depends on.
@@ -22,7 +23,11 @@ type Request struct {
 	// Plaintext is an *_encrypt request's input, checked by deny_matching.
 	Plaintext    string
 	Attestations []*nip01.Event
-	Now          time.Time
+	// Subordinate (64 lowercase hex) and Conditions are a nipoa_attest
+	// request's params: the key to attest and the NIP-OA conditions.
+	Subordinate string
+	Conditions  string
+	Now         time.Time
 	// StartTime is when the signer started; attestations created earlier
 	// never count. Zero disables the check.
 	StartTime time.Time
@@ -78,6 +83,13 @@ func Evaluate(req Request, p *Policy, used func(id string) bool) Decision {
 	if !ruleMethods[req.Method] {
 		return deny("", "unsupported method %s", req.Method)
 	}
+	var attestConds nipOA.Conditions
+	if req.Method == MethodAttest {
+		var reason string
+		if attestConds, reason = parseAttestRequest(&req); reason != "" {
+			return deny("", "%s", reason)
+		}
+	}
 	if req.Method == nip46.MethodSignEvent {
 		if req.Event == nil {
 			return deny("", "missing event")
@@ -92,6 +104,11 @@ func Evaluate(req Request, p *Policy, used func(id string) bool) Decision {
 
 	var rule *Rule
 	for i := range p.Rules {
+		// Only a rule written for attestations allows one: a catch-all
+		// allow (--allow-catch-all) never signs an attestation.
+		if req.Method == MethodAttest && p.Rules[i].Allow != nil && p.Rules[i].Allow.Attest == nil {
+			continue
+		}
 		if matches(p.Rules[i].selector(), &req) {
 			rule = &p.Rules[i]
 			break
@@ -106,6 +123,12 @@ func Evaluate(req Request, p *Policy, used func(id string) bool) Decision {
 
 	if reason := matchDenyPatterns(rule, &req); reason != "" {
 		return deny(rule.Name, "%s", reason)
+	}
+	if req.Method == MethodAttest {
+		if reason := rule.Allow.Attest.check(attestConds, req.Now); reason != "" {
+			return deny(rule.Name, "%s", reason)
+		}
+		return Decision{Allow: true, Rule: rule.Name, Rate: rule.rate}
 	}
 
 	var consumed []string
@@ -154,6 +177,9 @@ func Evaluate(req Request, p *Policy, used func(id string) bool) Decision {
 func matches(s *Selector, req *Request) bool {
 	if len(s.Methods) > 0 && !containsString(s.Methods, req.Method) {
 		return false
+	}
+	if s.Attest != nil {
+		return req.Method == MethodAttest && s.Attest.matches(req.Subordinate)
 	}
 	if s.counterparts != nil && !s.counterparts[strings.ToLower(req.Counterpart)] {
 		return false

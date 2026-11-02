@@ -21,11 +21,12 @@ selector, unless serve/check runs with `--allow-catch-all`.
 
 | Field | Applies to | Matches when |
 |---|---|---|
-| `methods` | all | the method is listed: `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `nip44_message_keys` |
+| `methods` | all | the method is listed: `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `nip44_message_keys`, `nipoa_attest` |
 | `kinds` | `sign_event` | the event kind is listed |
 | `tags` | `sign_event` | for every key, some tag with that name has a first value matching an entry: exact, or a prefix when the entry ends in `*` |
 | `counterparts` | encrypt/decrypt | the peer pubkey (npub or hex) is listed |
 | `unwrap_from` | `nip44_decrypt` | any counterpart; the result is released only if it is a kind 13 seal that verifies, signed by a listed pubkey |
+| `attest` | `nipoa_attest` | the subordinate key is in `attest.subordinates` (npub/hex, or `"*"`); see [NIP-OA attestations](#nip-oa-attestations) |
 
 - **Default methods.** If `methods` is omitted, `kinds`/`tags` imply
   `[sign_event]`, `counterparts` implies all four encrypt/decrypt
@@ -47,6 +48,39 @@ selector, unless serve/check runs with `--allow-catch-all`.
 `deny_matching` checks a `sign_event`'s content and every tag value, or an
 `*_encrypt` request's plaintext. The reason names the pattern by its
 index (`pattern #2`), not its text.
+
+## NIP-OA attestations
+
+`nipoa_attest` (ncli's own method, used by `ncli attest --signer`) signs a
+NIP-OA owner attestation: the tag `["auth", <signer>, <conditions>, <sig>]`
+for a subordinate key. The signer takes the subordinate key (64 lowercase
+hex) and the conditions, checks the conditions' grammar, and signs
+SHA-256 of NIP-OA's preimage (`nostr:agent-auth:<subordinate>:<conditions>`),
+which it builds itself: it never signs a digest it is handed, so it can't
+be made to sign an event id.
+
+```yaml
+  - name: attest-one
+    allow: {attest: {subordinates: [npub1...], max_until: 30d}}
+    rate: 6/h
+  - name: attest-notes
+    allow: {attest: {subordinates: ["*"], max_until: 7d, kinds: [1]}}
+```
+
+- **Default deny.** Only a rule with an `attest` selector allows an
+  attestation: a catch-all `allow: {}` does not, nor does any rule for
+  events or encryption. `deny: {}` and `deny: {attest: {subordinates: [...]}}`
+  deny them.
+- **`max_until` is required** in an allow rule (`30d`, `12h`): the
+  conditions must carry a `created_at<` bound in the future, no further
+  than `max_until` ahead. An attestation without an end is refused.
+- **`kinds`**, when set, requires at least one `kind=` clause, each one
+  listed.
+- **Never itself.** A key can't attest itself.
+- **Stands alone.** `attest` takes no `kinds`/`tags`/`counterparts`, and
+  its rule takes no `deny_matching` or `require`; a `rate` applies.
+- Each attestation is logged with `subordinate` and `conditions` (never the
+  signature).
 
 ## Scope authentication kinds
 
