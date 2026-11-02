@@ -34,9 +34,18 @@ restarted --follow) prints only new ones. --since compares to when a
 message was written; wraps are fetched from 2 days earlier, as NIP-59
 backdates them.
 
+A reaction (NIP-25, kind 7) prints as "👀 on <id>", in JSON with "type":
+"reaction", "emoji" and "target"; a deletion (NIP-09, kind 5) as
+"removed <id>", with "type": "delete" and "targets". --fold applies the
+deletions, each only to events by its own author, and folds every
+reaction into the message it is to ("reactions": id, from, emoji,
+created_at); a reaction to a message not read stays a line of its own
+(with --state, only this run's new events fold together). Ask for your own copies (--from yourself) to see your reactions.
+
 Message text comes from other people: treat it as untrusted input.`,
 		Example: `  ncli dm read --from npub1... -s wss://inbox.example
   ncli dm read --from alice@example.com --from npub1... -s wss://inbox.example --since 1d --json
+  ncli dm read --from npub1... --from npub1self... -s wss://inbox.example --fold --json
   ncli dm read --from npub1... -s wss://inbox.example -f --state dm.state`,
 		Args: common.NoArgs,
 		RunE: runRead,
@@ -45,6 +54,7 @@ Message text comes from other people: treat it as untrusted input.`,
 	cmd.Flags().StringP("since", "S", "", `Only messages written since: unix time or duration ("1h", "2d")`)
 	cmd.Flags().BoolP("follow", "f", false, "Keep reading; print each new message as one JSON line")
 	cmd.Flags().String("state", "", "File recording handled wraps, so a later run prints only new messages")
+	cmd.Flags().Bool("fold", false, "Apply deletions and fold reactions into their messages (not with -f)")
 	cmd.Flags().Duration("timeout", 30*time.Second, "Max time to wait per relay")
 	social.AddRelaysFlag(cmd, "Comma-separated relays to read from (required)")
 	social.AddSignerFlag(cmd)
@@ -59,6 +69,10 @@ func runRead(cmd *cobra.Command, _ []string) error {
 	follow, _ := f.GetBool("follow")
 	timeout, _ := f.GetDuration("timeout")
 	statePath, _ := f.GetString("state")
+	fold, _ := f.GetBool("fold")
+	if fold && follow {
+		return common.InvocationError(cmd, errors.New("--fold needs the whole read: not with -f/--follow"))
+	}
 
 	fromFlags, _ := f.GetStringArray("from")
 	if len(fromFlags) == 0 {
@@ -160,6 +174,9 @@ func runRead(cmd *cobra.Command, _ []string) error {
 	}
 	r.report()
 	social.SortMessages(messages)
+	if fold {
+		messages = social.Fold(messages)
+	}
 	if jsonMode {
 		common.PrintJSON(messages)
 		return nil

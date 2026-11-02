@@ -169,6 +169,64 @@ func (a membershipAdmin) issueInviteCode(code string, ttl time.Duration, maxUses
 	return claim, nil
 }
 
+// issueInviteWithLimits stores a caller-named invite with an already-resolved
+// absolute expiry (unix seconds; 0 = never) and max_uses, as
+// createclaimwithlimits needs. Unlike issueInviteCode it does not derive expiry
+// from a TTL: the shared validator (resolveInviteLimits) has already turned the
+// requested limits into verbatim absolute values, so this persists them as-is
+// rather than re-deriving and risking a silent clamp.
+func (a membershipAdmin) issueInviteWithLimits(code string, expiresAt int64, maxUses int, roles []string) (*relay.InviteClaim, error) {
+	if code == "" {
+		return nil, badInput("invite code is required")
+	}
+	// Refuse to overwrite an existing code: silently replacing it would reset
+	// the use count and expiry of an invite already handed out.
+	existing, err := a.store.GetInviteClaim(code)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, badInput("that invite code already exists")
+	}
+
+	claim := &relay.InviteClaim{
+		Code:      code,
+		CreatedAt: time.Now().Unix(),
+		ExpiresAt: expiresAt,
+		MaxUses:   maxUses,
+		Roles:     roles,
+	}
+	if err := a.store.PutInviteClaim(claim); err != nil {
+		return nil, err
+	}
+	return claim, nil
+}
+
+// issueInviteGenerated mints a relay-generated invite code carrying an
+// already-resolved absolute expiry (unix seconds; 0 = never) and max_uses. It
+// is the generated-code counterpart to issueInviteWithLimits: the REST route
+// (handleInviteCreate) uses it when the caller sent an absolute expires_at --
+// what `ncli relay invites create --expires-at/--no-expiry` sends -- rather
+// than a ttl. Unlike the relay SDK's IssueInvite it does not derive the expiry
+// from a TTL, so it can store expires_at:0 (never) verbatim without the SDK's
+// ttl<=0 default kicking in.
+func (a membershipAdmin) issueInviteGenerated(expiresAt int64, maxUses int, roles []string) (*relay.InviteClaim, error) {
+	if maxUses < 0 {
+		return nil, badInput("max_uses must be >= 0")
+	}
+	claim := &relay.InviteClaim{
+		Code:      nip43.NewClaim(),
+		CreatedAt: time.Now().Unix(),
+		ExpiresAt: expiresAt,
+		MaxUses:   maxUses,
+		Roles:     roles,
+	}
+	if err := a.store.PutInviteClaim(claim); err != nil {
+		return nil, err
+	}
+	return claim, nil
+}
+
 func (a membershipAdmin) listInvites() ([]*relay.InviteClaim, error) {
 	claims, err := a.store.ListInviteClaims()
 	if err != nil {
@@ -178,6 +236,46 @@ func (a membershipAdmin) listInvites() ([]*relay.InviteClaim, error) {
 		claims = []*relay.InviteClaim{}
 	}
 	return claims, nil
+}
+
+// liveInviteCodes returns the codes of invites still usable right now -- not
+// expired and not used up -- as bare strings, which is what NIP-86 listclaims
+// answers. The expiry/exhaustion test mirrors the store's own ConsumeInviteClaim
+// so a code this hides is exactly a code a join would reject.
+func (a membershipAdmin) liveInviteCodes() ([]string, error) {
+	claims, err := a.store.ListInviteClaims()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().Unix()
+	codes := make([]string, 0, len(claims))
+	for _, c := range claims {
+		if c.ExpiresAt > 0 && now > c.ExpiresAt {
+			continue // expired
+		}
+		if c.MaxUses > 0 && c.Uses >= c.MaxUses {
+			continue // used up
+		}
+		codes = append(codes, c.Code)
+	}
+	return codes, nil
+}
+
+// getInvite returns the stored claim for code, including expired/used-up ones,
+// as NIP-86 getclaim needs. An unknown code is errNotFound, which each surface
+// renders in its own vocabulary.
+func (a membershipAdmin) getInvite(code string) (*relay.InviteClaim, error) {
+	if code == "" {
+		return nil, badInput("invite code is required")
+	}
+	claim, err := a.store.GetInviteClaim(code)
+	if err != nil {
+		return nil, err
+	}
+	if claim == nil {
+		return nil, errNotFound
+	}
+	return claim, nil
 }
 
 func (a membershipAdmin) revokeInvite(code string) error {
@@ -194,6 +292,93 @@ func (a membershipAdmin) revokeInvite(code string) error {
 		return errNotFound
 	}
 	return a.store.DeleteInviteClaim(code)
+}
+
+// minClaimLength is the floor on a client-chosen invite code: a code shorter
+// than this is too guessable to hand bearer-admission power. NIP-86's proposed
+// text asks clients for >=128 bits of randomness; 16 chars is the practical
+// minimum this relay enforces on top of that recommendation.
+const minClaimLength = 16
+
+// validateClaimStrength rejects a client-chosen invite code that is too short
+// or contains a character outside [A-Za-z0-9_-]. The generated-code path
+// (createclaim with no code) does not go through this: the relay makes those
+// strong itself.
+func validateClaimStrength(code string) error {
+	if len(code) < minClaimLength {
+		return badInput("invite code must be at least %d characters", minClaimLength)
+	}
+	for _, r := range code {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-':
+		default:
+			return badInput("invite code may only contain letters, digits, '_' or '-'")
+		}
+	}
+	return nil
+}
+
+// invitePolicy is the relay's configured ceiling/defaults for per-invite
+// expiry and uses, resolved from membership config. Shared by the NIP-86
+// createclaimwithlimits method and the `ncli relay invites create` flags so
+// both enforce identical semantics.
+type invitePolicy struct {
+	defaultTTL     time.Duration // applied when expires_at is absent
+	maxTTL         time.Duration // ceiling on an explicit future expires_at
+	allowNoExpiry  bool          // whether expires_at:0 (never) is permitted
+	defaultMaxUses int           // applied when max_uses is absent
+}
+
+// inviteLimits are the per-invite limits a caller requested. A nil field means
+// "absent -> use the relay's default"; this is why the fields are pointers and
+// not plain values (0 is a meaningful value for expires_at -- "never").
+type inviteLimits struct {
+	ExpiresAt *int64 `json:"expires_at"`
+	MaxUses   *int   `json:"max_uses"`
+}
+
+// resolveInviteLimits is the one shared validator for section G. It turns the
+// requested limits into resolved absolute values against policy, or returns a
+// badInput. It NEVER clamps: a request outside policy is an error.
+//
+//   - expires_at absent      -> now + policy.defaultTTL
+//   - expires_at == 0        -> never (0), only if policy.allowNoExpiry
+//   - expires_at > 0         -> must be in the future AND <= now + policy.maxTTL
+//   - max_uses absent        -> policy.defaultMaxUses
+//   - max_uses present       -> must be >= 1
+func resolveInviteLimits(now time.Time, lim inviteLimits, policy invitePolicy) (expiresAt int64, maxUses int, err error) {
+	switch {
+	case lim.ExpiresAt == nil:
+		expiresAt = now.Add(policy.defaultTTL).Unix()
+	case *lim.ExpiresAt == 0:
+		if !policy.allowNoExpiry {
+			return 0, 0, badInput("expires_at 0 (never expires) is not allowed by this relay")
+		}
+		expiresAt = 0
+	default:
+		v := *lim.ExpiresAt
+		if v <= now.Unix() {
+			return 0, 0, badInput("expires_at must be in the future")
+		}
+		if max := now.Add(policy.maxTTL).Unix(); v > max {
+			return 0, 0, badInput("expires_at is later than this relay allows (at most %s from now)", policy.maxTTL)
+		}
+		expiresAt = v
+	}
+
+	switch {
+	case lim.MaxUses == nil:
+		maxUses = policy.defaultMaxUses
+	case *lim.MaxUses < 1:
+		return 0, 0, badInput("max_uses must be >= 1")
+	default:
+		maxUses = *lim.MaxUses
+	}
+
+	return expiresAt, maxUses, nil
 }
 
 /////////////////////////////////////////////////////////////////////

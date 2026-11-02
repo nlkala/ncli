@@ -95,30 +95,19 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer closeSigner()
-	me := strings.ToLower(signer.PubKey())
 
 	rumor := nip17.NewChatMessage(text, opts...)
 	rumor.CreatedAt = uint64(time.Now().Unix())
-	wraps, err := sealTo(cmd, signer, rumor, to)
+	wraps, err := wrapForBoth(cmd, signer, rumor, to)
 	if err != nil {
 		return err
-	}
-	if noCopy, _ := cmd.Flags().GetBool("no-self-copy"); !noCopy && to != me {
-		self, err := sealTo(cmd, signer, rumor.Copy(), me)
-		if err != nil {
-			return err
-		}
-		wraps = append(wraps, self...)
 	}
 
 	report, err := social.Publish(ctx, cmd, targets, wraps, signer)
 	if err != nil {
 		return err
 	}
-	out := sent{ID: rumor.ID, To: to, Report: report, Wraps: []string{}}
-	for _, w := range wraps {
-		out.Wraps = append(out.Wraps, w.ID)
-	}
+	out := sent{ID: rumor.ID, To: to, Report: report, Wraps: wrapIDs(wraps)}
 	if jsonMode {
 		common.PrintJSON(out)
 	} else {
@@ -126,6 +115,25 @@ func runSend(cmd *cobra.Command, args []string) error {
 		social.PrintReportLines(cmd, report)
 	}
 	return social.ReportError(cmd, report)
+}
+
+// wrapForBoth seals rumor to recipient and, unless --no-self-copy, a copy
+// to the signer's own key, and gift-wraps each. rumor gets its id and
+// pubkey; the copy has the same id.
+func wrapForBoth(cmd *cobra.Command, signer client.Crypto, rumor *nip01.Event, recipient string) ([]*nip01.Event, error) {
+	me := strings.ToLower(signer.PubKey())
+	wraps, err := sealTo(cmd, signer, rumor, recipient)
+	if err != nil {
+		return nil, err
+	}
+	if noCopy, _ := cmd.Flags().GetBool("no-self-copy"); !noCopy && recipient != me {
+		self, err := sealTo(cmd, signer, rumor.Copy(), me)
+		if err != nil {
+			return nil, err
+		}
+		wraps = append(wraps, self...)
+	}
+	return wraps, nil
 }
 
 // sealTo seals rumor to recipient with signer and wraps it.

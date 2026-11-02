@@ -1248,6 +1248,9 @@ talk on Nostr while its key stays in `ncli signer serve`.
 ncli dm send --to npub1alice... "on my way" -s wss://inbox.example --signer bunker+unix:///run/signer/agent.sock
 # only alice's messages are opened; -f streams new ones
 ncli dm read --from npub1alice... -s wss://inbox.example -f --state dm.state
+# react privately (NIP-25 in a gift wrap), and take it back (NIP-09)
+ncli dm react --to npub1alice... <message-id> 👀 -s wss://inbox.example
+ncli dm unreact --to npub1alice... --target <message-id> --emoji 👀 -s wss://inbox.example
 # show one message to anyone, who checks it without a key
 ncli dm prove <wrap-id> --from npub1alice... -s wss://inbox.example -o proof.json
 ncli dm verify proof.json --from npub1alice...

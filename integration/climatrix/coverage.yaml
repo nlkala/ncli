@@ -34,8 +34,10 @@
 "decode": {modes: [json, text, tty, errors], tests: [TestDecode, TestTTY_FailureShapes, TestTTY_Color]}
 "dm": {modes: [errors], tests: [TestDM_Errors]}
 "dm prove": {modes: [json, errors], tests: [TestDM]}
-"dm read": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
+"dm react": {modes: [json, text, errors], tests: [TestDMReactions, TestDMReactions_Errors]}
+"dm read": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors, TestDMReactions, TestDMReactions_Errors]}
 "dm send": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
+"dm unreact": {modes: [json, text, errors], tests: [TestDMReactions, TestDMReactions_Errors]}
 "dm verify": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
 "dump": {modes: [json, errors], tests: [TestQuery, TestRelayLogin_AuthRequired, TestPersonForms]}
 "event": {modes: [errors], tests: [TestBareGroupCommands]}
@@ -120,6 +122,7 @@
 "relay index rebuild": {modes: [json, text, errors], tests: [TestRelayAdmin, TestRelayAdminTextOutput, TestDerivedIndexLifecycle, TestIndexLifecycle_KilledMidRebuildResumes, TestIndexLifecycle_RebuildInATerminal]}
 "relay invites": {modes: [errors], tests: [TestBareGroupCommands]}
 "relay invites create": {modes: [json, errors], tests: [TestRelayAdmin, TestAttack_NIP43Membership]}
+"relay invites get": {modes: [json, errors], tests: [TestRelayAdmin], pending: "operator-local getclaim mirror; covered by unit test TestRunInvitesGet (cli/relay)"}
 "relay invites list": {modes: [json], tests: [TestRelayAdmin]}
 "relay invites revoke": {modes: [json, errors], tests: [TestRelayAdmin, TestAttack_NIP43Membership]}
 "relay jobs": {modes: [errors], tests: [TestBareGroupCommands]}
