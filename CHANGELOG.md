@@ -9,6 +9,7 @@
 - Adds the `ncli-forms` skill.
 - Adds labels to `dm` and `form`: an event's `t` tags print as `#label` (printable ASCII, every other rune escaped) after the author and before the subject or title, and `dm send --label` sets them.
 - Adds `--auth` (and `NCLI_AUTH_TAG`) to every command that signs through `--signer`: a NIP-OA `auth` tag, checked against the signer's key, added to every event it signs whose kind and time its conditions allow -- on a DM's or a private form's rumor too, inside the seal; never on a seal or a gift wrap.
+- Adds NIP-OA attestations to `dm read`, `dm verify`, `groups read`/`feed` and the `form` commands: an `auth` tag is checked, `--json` gives `attested_by`, `attest_valid` and `attest_trusted`, and text output shows `[agent of <owner>]` for an owner named in `--trust-owners` (word: `--attest-label`), `[attested by <owner>, owner not trusted]` or `[invalid attestation]`, in the client's column after the author.
 
 ### Fixed
 
