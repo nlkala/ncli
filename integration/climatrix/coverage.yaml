@@ -34,8 +34,10 @@
 "decode": {modes: [json, text, tty, errors], tests: [TestDecode, TestTTY_FailureShapes, TestTTY_Color]}
 "dm": {modes: [errors], tests: [TestDM_Errors]}
 "dm prove": {modes: [json, errors], tests: [TestDM]}
-"dm read": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
+"dm react": {modes: [json, text, errors], tests: [TestDMReactions, TestDMReactions_Errors]}
+"dm read": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors, TestDMReactions, TestDMReactions_Errors]}
 "dm send": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
+"dm unreact": {modes: [json, text, errors], tests: [TestDMReactions, TestDMReactions_Errors]}
 "dm verify": {modes: [json, text, errors], tests: [TestDM, TestDM_Errors]}
 "dump": {modes: [json, errors], tests: [TestQuery, TestRelayLogin_AuthRequired, TestPersonForms]}
 "event": {modes: [errors], tests: [TestBareGroupCommands]}

@@ -26,7 +26,30 @@ type Message struct {
 	Root      string   `json:"root,omitempty"`
 	Mentions  []string `json:"mentions"`
 	Content   string   `json:"content"`
+	// Type is "reaction" (a NIP-25 kind 7) or "delete" (a NIP-09 kind 5);
+	// empty for a message.
+	Type    string   `json:"type,omitempty"`
+	Emoji   string   `json:"emoji,omitempty"`   // a reaction's content
+	Target  string   `json:"target,omitempty"`  // the event a reaction is to
+	Targets []string `json:"targets,omitempty"` // the events a deletion names
+	// Reactions are the reactions to this message still standing, when a
+	// reader folds them in (dm read --fold).
+	Reactions []Reaction `json:"reactions,omitempty"`
 }
+
+// Reaction is one reaction folded into the message it is to.
+type Reaction struct {
+	ID        string `json:"id"`
+	From      string `json:"from"`
+	Emoji     string `json:"emoji"`
+	CreatedAt uint64 `json:"created_at"`
+}
+
+// Kinds FromEvent gives a meaning beyond a message.
+const (
+	KindDeletion = 5 // NIP-09
+	KindReaction = 7 // NIP-25
+)
 
 // FromEvent reads ev's threading (NIP-10 markers, else NIP-17's unmarked
 // "e"), subject and "p" tags into a Message.
@@ -90,6 +113,24 @@ func FromEvent(ev *nip01.Event, channel string) Message {
 			m.Root = root
 		}
 	}
+	switch ev.Kind {
+	case KindReaction:
+		// NIP-25: the last "e" is the event reacted to; it is no reply.
+		m.Type, m.Emoji, m.ReplyTo, m.Root = "reaction", ev.Content, "", ""
+		for _, t := range ev.Tags {
+			if len(t) >= 2 && t[0] == "e" {
+				m.Target = strings.ToLower(t[1])
+			}
+		}
+	case KindDeletion:
+		// NIP-09: every "e" is an event its author asks to drop.
+		m.Type, m.ReplyTo, m.Root, m.Targets = "delete", "", "", []string{}
+		for _, t := range ev.Tags {
+			if len(t) >= 2 && t[0] == "e" {
+				m.Targets = append(m.Targets, strings.ToLower(t[1]))
+			}
+		}
+	}
 	return m
 }
 
@@ -117,9 +158,85 @@ func PrintMessage(w io.Writer, m Message) {
 		head += "  ↩ " + short(m.ReplyTo)
 	}
 	_, _ = fmt.Fprintf(w, "%s  %s\n", head, short(m.ID))
+	switch m.Type {
+	case "reaction":
+		_, _ = fmt.Fprintf(w, "  %s on %s\n", m.Emoji, short(m.Target))
+		return
+	case "delete":
+		ids := make([]string, len(m.Targets))
+		for i, id := range m.Targets {
+			ids[i] = short(id)
+		}
+		_, _ = fmt.Fprintf(w, "  removed %s\n", strings.Join(ids, ", "))
+		return
+	}
 	for _, line := range strings.Split(m.Content, "\n") {
 		_, _ = fmt.Fprintf(w, "  %s\n", line)
 	}
+	if len(m.Reactions) > 0 {
+		// "reactions: 👀 2, 💬 1", in the order each emoji first came.
+		var emojis []string
+		n := map[string]int{}
+		for _, r := range m.Reactions {
+			if n[r.Emoji] == 0 {
+				emojis = append(emojis, r.Emoji)
+			}
+			n[r.Emoji]++
+		}
+		for i, e := range emojis {
+			emojis[i] = fmt.Sprintf("%s %d", e, n[e])
+		}
+		_, _ = fmt.Fprintf(w, "  reactions: %s\n", strings.Join(emojis, ", "))
+	}
+}
+
+// Fold applies deletions and folds reactions into the messages they are
+// to. A deletion counts only for events by its own author (NIP-09): it
+// removes them, and is itself dropped. A reaction to a message in ms joins
+// that message's Reactions, oldest first, and goes with it if it was
+// deleted; one to an event not in ms stays in place as a reaction. Order
+// is kept.
+func Fold(ms []Message) []Message {
+	byID := map[string]Message{}
+	for _, m := range ms {
+		byID[m.ID] = m
+	}
+	deleted := map[string]bool{}
+	for _, m := range ms {
+		if m.Type != "delete" {
+			continue
+		}
+		for _, id := range m.Targets {
+			if t, ok := byID[id]; ok && t.From == m.From && t.ID != m.ID {
+				deleted[id] = true
+			}
+		}
+	}
+	// The reactions each message left standing gets.
+	reactions := map[string][]Reaction{}
+	for _, m := range ms {
+		if m.Type == "reaction" && !deleted[m.ID] {
+			if t, ok := byID[m.Target]; ok && t.Type == "" && !deleted[t.ID] {
+				reactions[t.ID] = append(reactions[t.ID], Reaction{ID: m.ID, From: m.From, Emoji: m.Emoji, CreatedAt: m.CreatedAt})
+			}
+		}
+	}
+	out := []Message{}
+	for _, m := range ms {
+		switch {
+		case deleted[m.ID], m.Type == "delete":
+			continue
+		case m.Type == "reaction":
+			if t, ok := byID[m.Target]; ok && t.Type == "" {
+				continue // folded into its message, or gone with it
+			}
+		case m.Type == "":
+			m.Reactions = reactions[m.ID]
+			sort.SliceStable(m.Reactions, func(i, j int) bool { return m.Reactions[i].CreatedAt < m.Reactions[j].CreatedAt })
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func short(id string) string {

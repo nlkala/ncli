@@ -27,7 +27,7 @@ const wrapBackdate = 2 * 24 * time.Hour
 func NewDMCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dm",
-		Short: "Send, read and prove NIP-17 private messages through a signer",
+		Short: "Send, read, react to and prove NIP-17 private messages through a signer",
 		Long: `Private messages (NIP-17): each message is sealed and signed by the
 sender, then gift-wrapped under a one-time key (NIP-59), so relays see
 neither the sender nor the content.
@@ -44,12 +44,16 @@ without any key.`,
 		Example: `  ncli dm send --to npub1... "hi" -s wss://inbox.example --signer bunker+unix:///run/signer/agent.sock
   ncli dm read --from npub1... -s wss://inbox.example --json
   ncli dm read --from npub1... -s wss://inbox.example -f --state dm.state
+  ncli dm react --to npub1... <message-id> 👀 -s wss://inbox.example --json
+  ncli dm unreact --to npub1... --target <message-id> --emoji 👀 -s wss://inbox.example
   ncli dm prove <wrap-id> --from npub1... -s wss://inbox.example -o proof.json
   ncli dm verify proof.json --from npub1...`,
 		RunE: common.RequireSubcommand,
 	}
 	cmd.AddCommand(newSendCommand())
 	cmd.AddCommand(newReadCommand())
+	cmd.AddCommand(newReactCommand())
+	cmd.AddCommand(newUnreactCommand())
 	cmd.AddCommand(newProveCommand())
 	cmd.AddCommand(newVerifyCommand())
 	return cmd
