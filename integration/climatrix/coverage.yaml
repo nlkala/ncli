@@ -119,6 +119,7 @@
 "relay index rebuild": {modes: [json, text, errors], tests: [TestRelayAdmin, TestRelayAdminTextOutput, TestDerivedIndexLifecycle, TestIndexLifecycle_KilledMidRebuildResumes, TestIndexLifecycle_RebuildInATerminal]}
 "relay invites": {modes: [errors], tests: [TestBareGroupCommands]}
 "relay invites create": {modes: [json, errors], tests: [TestRelayAdmin, TestAttack_NIP43Membership]}
+"relay invites get": {modes: [json, errors], tests: [TestRelayAdmin], pending: "operator-local getclaim mirror; covered by unit test TestRunInvitesGet (cli/relay)"}
 "relay invites list": {modes: [json], tests: [TestRelayAdmin]}
 "relay invites revoke": {modes: [json, errors], tests: [TestRelayAdmin, TestAttack_NIP43Membership]}
 "relay jobs": {modes: [errors], tests: [TestBareGroupCommands]}

@@ -94,11 +94,18 @@ func addMembershipAdminCommands(cmd *cobra.Command) {
 	invitesCreateCmd.Flags().Duration("ttl", 0, "how long the code stays valid (default: relay's configured default)")
 	invitesCreateCmd.Flags().Int("max-uses", 0, "maximum number of times the code may be used (0 = unlimited)")
 	invitesCreateCmd.Flags().StringArray("role", nil, "role id granted on join (repeatable)")
+	invitesCreateCmd.Flags().Int64("expires-at", 0, "absolute expiry as a unix timestamp in seconds (must be future and within the relay's inviteMaxTTL); mutually exclusive with --ttl/--no-expiry")
+	invitesCreateCmd.Flags().Bool("no-expiry", false, "issue a code that never expires (requires membership.inviteAllowNoExpiry); mutually exclusive with --ttl/--expires-at")
 	invitesCmd.AddCommand(invitesCreateCmd)
 	invitesCmd.AddCommand(&cobra.Command{
 		Use: "list", Short: "List all invite codes",
 		Example: `  ncli relay invites list --config relay.yaml`,
 		RunE:    runInvitesList,
+	})
+	invitesCmd.AddCommand(&cobra.Command{
+		Use: "get <code>", Short: "Show one invite code's state (incl. expired/used-up)",
+		Example: `  ncli relay invites get <code> --config relay.yaml`,
+		Args:    common.ExactArgs(1), RunE: runInvitesGet,
 	})
 	invitesCmd.AddCommand(&cobra.Command{
 		Use: "revoke <code>", Short: "Revoke an invite code",
@@ -486,15 +493,102 @@ func runMembersRemove(cmd *cobra.Command, args []string) error {
 // Membership admin: invites
 /////////////////////////////////////////////////////////////////////
 
+// invitePolicyFromViper reads the membership invite policy the admin CLI needs
+// to validate --expires-at/--no-expiry locally. Admin subcommands don't run
+// initConfig -- they talk to a running relay over HTTP -- so the unmarshalled
+// `config` global is empty here; the same keys are read straight from viper,
+// which the root command loaded from the relay's config file.
+func invitePolicyFromViper() invitePolicy {
+	p := invitePolicy{
+		defaultTTL:     defaultInviteTTL,
+		maxTTL:         defaultInviteMaxTTL,
+		allowNoExpiry:  viper.GetBool("membership.inviteAllowNoExpiry"),
+		defaultMaxUses: viper.GetInt("membership.inviteMaxUses"),
+	}
+	if s := viper.GetString("membership.inviteTTL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			p.defaultTTL = d
+		}
+	}
+	if s := viper.GetString("membership.inviteMaxTTL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			p.maxTTL = d
+		}
+	}
+	return p
+}
+
+// inviteExpiryChoice is the validated outcome of the mutually-exclusive
+// --ttl/--expires-at/--no-expiry trio. Exactly one of its fields is set (both
+// zero means no expiry flag was given, so the relay applies its default).
+type inviteExpiryChoice struct {
+	ttl       string // non-empty -> send as the request body's "ttl"
+	expiresAt *int64 // non-nil  -> send as "expires_at" (0 = never)
+}
+
+// resolveInviteCreateExpiry enforces that at most one of --ttl/--expires-at/
+// --no-expiry is given and validates --expires-at/--no-expiry against policy,
+// reusing the shared resolveInviteLimits validator (section G) so the CLI and
+// the createclaimwithlimits method agree on what is in-policy.
+func resolveInviteCreateExpiry(ttl time.Duration, ttlSet bool, expiresAt int64, expiresAtSet, noExpiry bool, policy invitePolicy, now time.Time) (inviteExpiryChoice, error) {
+	set := 0
+	for _, on := range []bool{ttlSet, expiresAtSet, noExpiry} {
+		if on {
+			set++
+		}
+	}
+	if set > 1 {
+		return inviteExpiryChoice{}, badInput("--ttl, --expires-at and --no-expiry are mutually exclusive; give at most one")
+	}
+
+	switch {
+	case noExpiry:
+		if !policy.allowNoExpiry {
+			return inviteExpiryChoice{}, badInput("--no-expiry is not allowed by this relay (membership.inviteAllowNoExpiry is false)")
+		}
+		never := int64(0)
+		return inviteExpiryChoice{expiresAt: &never}, nil
+	case expiresAtSet:
+		resolved, _, err := resolveInviteLimits(now, inviteLimits{ExpiresAt: &expiresAt}, policy)
+		if err != nil {
+			return inviteExpiryChoice{}, err
+		}
+		return inviteExpiryChoice{expiresAt: &resolved}, nil
+	case ttlSet:
+		return inviteExpiryChoice{ttl: ttl.String()}, nil
+	default:
+		return inviteExpiryChoice{}, nil
+	}
+}
+
 func runInvitesCreate(cmd *cobra.Command, args []string) error {
 	jsonMode, _ := cmd.Flags().GetBool("json")
 	ttl, _ := cmd.Flags().GetDuration("ttl")
 	maxUses, _ := cmd.Flags().GetInt("max-uses")
 	roles, _ := cmd.Flags().GetStringArray("role")
+	expiresAt, _ := cmd.Flags().GetInt64("expires-at")
+	noExpiry, _ := cmd.Flags().GetBool("no-expiry")
+
+	choice, err := resolveInviteCreateExpiry(
+		ttl, cmd.Flags().Changed("ttl"),
+		expiresAt, cmd.Flags().Changed("expires-at"), noExpiry,
+		invitePolicyFromViper(), time.Now(),
+	)
+	if err != nil {
+		return common.UsageError(cmd, err)
+	}
 
 	body := map[string]interface{}{"max_uses": maxUses, "roles": roles}
-	if ttl > 0 {
-		body["ttl"] = ttl.String()
+	if choice.ttl != "" {
+		body["ttl"] = choice.ttl
+	}
+	if choice.expiresAt != nil {
+		// TODO(nip86 integration): the admin REST route handleInviteCreate
+		// (cli/relay/service_membership.go, out of scope for this pass) today
+		// reads only "ttl". Teach it to honour an absolute "expires_at"
+		// (0 = never) -- the same semantics createclaimwithlimits already
+		// enforces -- so --expires-at/--no-expiry take effect server-side.
+		body["expires_at"] = *choice.expiresAt
 	}
 
 	resp, err := adminRequestBody(cmd, "POST", "/admin/membership/invites", body)
@@ -554,6 +648,61 @@ func runInvitesList(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", truncCode(strField(m, "code")), usesCol, formatUnix(int64Field(m, "expires_at")), joinOrDash(stringsField(m, "roles")))
 	}
 	_ = tw.Flush()
+	return nil
+}
+
+// runInvitesGet mirrors the NIP-86 getclaim method for the operator-local
+// CLI: it prints one code's state (claim, expires_at, max_uses, uses),
+// including expired or used-up codes. It reads the same admin list route the
+// other invites commands use -- that route returns every stored claim incl.
+// dead ones -- and filters to the one code client-side, since there is no
+// single-invite REST route.
+func runInvitesGet(cmd *cobra.Command, args []string) error {
+	jsonMode, _ := cmd.Flags().GetBool("json")
+	code := args[0]
+
+	resp, err := adminRequest(cmd, "GET", "/admin/membership/invites")
+	if err != nil {
+		return common.RuntimeError(cmd, err)
+	}
+
+	invites, _ := resp["invites"].([]interface{})
+	var found map[string]interface{}
+	for _, raw := range invites {
+		if m, ok := raw.(map[string]interface{}); ok && strField(m, "code") == code {
+			found = m
+			break
+		}
+	}
+	if found == nil {
+		return common.RuntimeError(cmd, &common.CLIError{
+			Err:   fmt.Errorf("no such invite code: %s", code),
+			Code:  common.CodeNotFound,
+			Input: code,
+		})
+	}
+
+	// getclaim's output shape: the field is `claim`, not the record's `code`.
+	state := map[string]interface{}{
+		"claim":      strField(found, "code"),
+		"expires_at": int64Field(found, "expires_at"),
+		"max_uses":   int64Field(found, "max_uses"),
+		"uses":       int64Field(found, "uses"),
+	}
+	if jsonMode {
+		common.PrintJSON(state)
+		return nil
+	}
+
+	fmt.Println(titleStyle.Render(" ncli relay: invites get "))
+	fmt.Printf(" Claim:     %s\n", strField(found, "code"))
+	fmt.Printf(" Expires:   %s\n", formatUnix(int64Field(found, "expires_at")))
+	if maxUses := int64Field(found, "max_uses"); maxUses <= 0 {
+		fmt.Printf(" Max uses:  unlimited\n")
+	} else {
+		fmt.Printf(" Max uses:  %d\n", maxUses)
+	}
+	fmt.Printf(" Uses:      %d\n", int64Field(found, "uses"))
 	return nil
 }
 
