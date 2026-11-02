@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fixes the vault password prompt failing with `inappropriate ioctl for device` when the event is piped into a signing command (e.g. `ncli event new … | ncli publish -e - --signer <label>`). The prompt now reads from the controlling terminal, like ssh/sudo, and falls back to a clear "set NCLI_VAULT_PASSWORD" error when no terminal is available instead of the cryptic ioctl one.
+- Fixes the vault password prompt failing with `inappropriate ioctl for device` when the event is piped into a signing command (e.g. `ncli event new … | ncli publish -e - --signer <label>`). The prompt now reads from the controlling terminal, like ssh/sudo, and falls back to a clear "set NCLI_VAULT_PASSWORD" error when no terminal is available instead of the cryptic ioctl one. ([#206](https://github.com/ohstr/ncli/pull/206))
 - Fixes a NIP-46 consent flaw where approving a bunker `connect` silently granted every permission the app requested, permanently, even for an "Approve Once". The approval now shows the requested scope, "Approve Once" remembers nothing, and sensitive kinds (0/3/5 -- identity, contacts, deletion) always require per-request consent. ([#204](https://github.com/ohstr/ncli/pull/204))
 
 ## [0.8.0-rc.45]
