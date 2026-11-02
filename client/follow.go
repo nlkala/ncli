@@ -28,6 +28,16 @@ const maxSeen = 5000
 // state: it is neither printed nor remembered, so a later run looks again.
 var ErrSkip = errors.New("skip")
 
+// ErrSeenOnly, returned by FollowOptions.Emit, records an event's id as
+// delivered but leaves the relay's since where it was: an event that could
+// not be opened or verified says nothing true about its time, and a junk
+// one dated a year ahead must not make every later subscription ask only
+// for events from then on.
+var ErrSeenOnly = errors.New("seen only")
+
+// sinceNow is the clock a since is held to; tests move it.
+var sinceNow = time.Now
+
 // FollowState is what a follow has delivered, so a restart resumes where it
 // stopped: recently seen ids and, per relay, the newest created_at seen.
 // Delivery across a crash is at least once: an id seen in the last second
@@ -68,7 +78,16 @@ func LoadFollowState(path string) (*FollowState, error) {
 	for _, id := range f.Seen {
 		s.add(id)
 	}
+	// A since in the future (an older ncli recorded a junk event's
+	// created_at) would blind every later subscription: forget it, so the
+	// next one reads from its filter's own since again (delivery is at
+	// least once; seen ids are not repeated).
+	now := sinceNow().Unix()
 	for k, v := range f.Since {
+		if v > now {
+			s.dirty = true
+			continue
+		}
 		s.since[k] = v
 	}
 	return s, nil
@@ -94,7 +113,8 @@ func (s *FollowState) Seen(id string) bool {
 }
 
 // Mark records id as delivered from relay. It reports false if id was
-// already delivered.
+// already delivered. The relay's since moves up to createdAt, but never
+// past now: an event dated ahead can't make a resume skip what comes later.
 func (s *FollowState) Mark(id, relay string, createdAt int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,9 +122,26 @@ func (s *FollowState) Mark(id, relay string, createdAt int64) bool {
 		return false
 	}
 	s.add(id)
+	if now := sinceNow().Unix(); createdAt > now {
+		createdAt = now
+	}
 	if createdAt > s.since[relay] {
 		s.since[relay] = createdAt
 	}
+	s.dirty = true
+	return true
+}
+
+// MarkSeen records id as delivered without moving any since: for an event
+// whose time can't be trusted (a gift wrap that didn't open). It reports
+// false if id was already delivered.
+func (s *FollowState) MarkSeen(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen[id] {
+		return false
+	}
+	s.add(id)
 	s.dirty = true
 	return true
 }
@@ -427,7 +464,8 @@ func (f *follower) stream(ctx context.Context, sess *relaySession, relay string)
 }
 
 // emit hands ev to Emit once. It is recorded as delivered only after Emit
-// succeeds; ErrSkip leaves it unrecorded, to be looked at again.
+// succeeds; ErrSkip leaves it unrecorded, to be looked at again; ErrSeenOnly
+// records its id but not its time.
 func (f *follower) emit(ev *nip01.Event, relay string) error {
 	f.emitMu.Lock()
 	defer f.emitMu.Unlock()
@@ -437,6 +475,9 @@ func (f *follower) emit(ev *nip01.Event, relay string) error {
 	err := f.opts.Emit(ev, relay)
 	switch {
 	case errors.Is(err, ErrSkip):
+		return nil
+	case errors.Is(err, ErrSeenOnly):
+		f.opts.State.MarkSeen(ev.ID)
 		return nil
 	case err != nil:
 		return fmt.Errorf("%w: %w", errEmit, err)

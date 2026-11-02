@@ -137,6 +137,11 @@ func runRead(cmd *cobra.Command, _ []string) error {
 					common.PrintJSONLine(m)
 				case !record:
 					return client.ErrSkip
+				default:
+					// a wrap that didn't open: remembered, but its
+					// created_at moves no since (a junk wrap dated
+					// ahead would hide every later answer).
+					return client.ErrSeenOnly
 				}
 				return nil
 			},
@@ -166,8 +171,11 @@ func runRead(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return readError(cmd, err)
 		}
-		if record {
+		switch {
+		case show:
 			state.Mark(w.ID, "", int64(w.CreatedAt))
+		case record:
+			state.MarkSeen(w.ID) // didn't open: its time moves nothing
 		}
 		if show {
 			messages = append(messages, m)
@@ -220,7 +228,8 @@ func rateWait(ctx context.Context, n int) error {
 }
 
 // open returns the message in wrap, if it is one to print. record says
-// whether --state should remember the wrap: a message from another sender,
+// whether --state should remember the wrap (only a shown one, opened and
+// verified, moves its since): a message from another sender,
 // one the signer refused, or one older than --since is looked at again by a
 // later run. A wrap the signer refused for its rate is never skipped: open
 // waits and asks again until the signer opens or refuses it, or ctx ends
