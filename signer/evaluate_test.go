@@ -35,6 +35,11 @@ func TestEvaluateExamplePolicy(t *testing.T) {
 		{"relay auth, lookalike host", 22242, "", [][]string{{"relay", "wss://relay.example.evil.example"}}, false, "everything-else", "denied by rule"},
 		{"relay auth, other relay", 22242, "", [][]string{{"relay", "wss://other.example"}}, false, "everything-else", "denied by rule"},
 		{"relay auth, no relay tag", 22242, "", nil, false, "everything-else", "denied by rule"},
+		// tags_one: exactly one relay tag, ours (a relay takes any of a login's relay tags)
+		{"relay auth, ours then another", 22242, "", [][]string{{"relay", "wss://relay.example"}, {"relay", "wss://other.example"}}, false, "everything-else", "denied by rule"},
+		{"relay auth, another then ours", 22242, "", [][]string{{"relay", "wss://other.example"}, {"relay", "wss://relay.example"}}, false, "everything-else", "denied by rule"},
+		{"relay auth, ours twice", 22242, "", [][]string{{"relay", "wss://relay.example"}, {"relay", "wss://relay.example"}}, false, "everything-else", "denied by rule"},
+		{"relay auth, a bare relay tag beside ours", 22242, "", [][]string{{"relay", "wss://relay.example"}, {"relay"}}, false, "everything-else", "denied by rule"},
 		{"http auth, git host GET", 27235, "", [][]string{{"u", "https://git.example/repo.git/info/refs"}, {"method", "GET"}}, true, "http-auth", ""},
 		{"http auth, git host DELETE", 27235, "", [][]string{{"u", "https://git.example/repo"}, {"method", "DELETE"}}, false, "everything-else", "denied by rule"},
 		{"http auth, other host", 27235, "", [][]string{{"u", "https://bank.example/"}, {"method", "POST"}}, false, "everything-else", "denied by rule"},
@@ -106,6 +111,55 @@ rules:
 	}
 	if d := crypto("get_secret_key", friend); d.Allow || !strings.Contains(d.Reason, "unsupported method") {
 		t.Errorf("unknown method: %+v", d)
+	}
+}
+
+// tags matches when any same-named tag does; tags_one only when there is one, and it does.
+func TestEvaluateTagsOne(t *testing.T) {
+	_, signerPub := testKey(t, "signer")
+	p := mustParse(t, `kind: signer-policy
+rules:
+  - name: one
+    allow: {kinds: [22242], tags_one: {relay: ["wss://ours.example", "wss://ours.example/*"]}, tags: {challenge: ["c"]}}
+  - name: any
+    allow: {kinds: [1], tags: {relay: ["wss://ours.example"]}}
+  - name: rest
+    deny: {}
+`)
+	sign := func(kind int, tags ...[]string) Decision {
+		return Evaluate(Request{Method: nip46.MethodSignEvent, Event: target(t, signerPub, kind, t0, "", tags...), Now: t0, SignerPub: signerPub}, p, noneUsed)
+	}
+	ours, other, ch := []string{"relay", "wss://ours.example"}, []string{"relay", "wss://other.example"}, []string{"challenge", "c"}
+	for _, c := range []struct {
+		name  string
+		kind  int
+		tags  [][]string
+		allow bool
+	}{
+		{"one, ours", 22242, [][]string{ours, ch}, true},
+		{"one, ours with a path", 22242, [][]string{{"relay", "wss://ours.example/ws"}, ch}, true},
+		{"one, another", 22242, [][]string{other, ch}, false},
+		{"one, ours then another", 22242, [][]string{ours, other, ch}, false},
+		{"one, another then ours", 22242, [][]string{other, ours, ch}, false},
+		{"one, ours twice", 22242, [][]string{ours, ours, ch}, false},
+		{"one, none", 22242, [][]string{ch}, false},
+		{"one, ours, its other tag key unmatched", 22242, [][]string{ours, {"challenge", "d"}}, false},
+		{"any, ours then another (tags: any one)", 1, [][]string{ours, other}, true},
+	} {
+		if d := sign(c.kind, c.tags...); d.Allow != c.allow {
+			t.Errorf("%s: %+v", c.name, d)
+		}
+	}
+	for why, bad := range map[string]string{
+		"no value":        "{kinds: [1], tags_one: {relay: []}}",
+		"in tags too":     "{kinds: [1], tags: {relay: [a]}, tags_one: {relay: [a]}}",
+		"with an unwrap":  "{unwrap_from: [%s], tags_one: {relay: [a]}}",
+		"with a method":   "{methods: [nip44_encrypt], tags_one: {relay: [a]}}",
+		"with an attest ": "{attest: {subordinates: ['*'], max_until: 1d}, tags_one: {relay: [a]}}",
+	} {
+		if _, err := ParsePolicy([]byte("kind: signer-policy\nrules: [{name: r, allow: "+strings.ReplaceAll(bad, "%s", signerPub)+"}]"), "", LoadOptions{}); err == nil {
+			t.Errorf("%s: loaded", why)
+		}
 	}
 }
 

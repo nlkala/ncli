@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip53"
@@ -125,7 +126,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SPACE\tSTATUS\tLIVE\tSERVICE")
 	for _, s := range spaces {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Identifier, s.Status, liveLabel(s.Live), s.Service)
+		// NIP-53 space metadata is its publisher's text (match space/show.go).
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", social.Inline(s.Identifier), social.Inline(s.Status), liveLabel(s.Live), social.Inline(s.Service))
 	}
 	return tw.Flush()
 }

@@ -22,9 +22,10 @@ import (
 // SignerFlagHelp describes --signer the same way everywhere.
 const SignerFlagHelp = "Sign through bunker+unix:///path.sock, bunker://..., or an identity (vault label or nsec); also NCLI_SIGNER"
 
-// AddSignerFlag adds --signer to cmd.
+// AddSignerFlag adds --signer and --auth to cmd.
 func AddSignerFlag(cmd *cobra.Command) {
 	cmd.Flags().String("signer", "", SignerFlagHelp)
+	cmd.Flags().String("auth", "", AuthFlagHelp)
 }
 
 // AddRelaysFlag adds -s/--relays to cmd.
@@ -33,7 +34,9 @@ func AddRelaysFlag(cmd *cobra.Command, help string) {
 }
 
 // Signer resolves --signer, else NCLI_SIGNER. The signer also encrypts,
-// decrypts and logs in (NIP-42). Call the returned close when done.
+// decrypts and logs in (NIP-42). With --auth (or NCLI_AUTH_TAG), the
+// events it signs carry that NIP-OA auth tag (WithAuth), and so does a
+// rumor given to AddAuth. Call the returned close when done.
 func Signer(cmd *cobra.Command) (client.Crypto, func(), error) {
 	value, _ := cmd.Flags().GetString("signer")
 	if value == "" {
@@ -52,7 +55,12 @@ func Signer(cmd *cobra.Command) (client.Crypto, func(), error) {
 		closeSigner()
 		return nil, nil, common.UnsupportedError(cmd, "", errors.New("this signer can't encrypt or decrypt"))
 	}
-	return c, closeSigner, nil
+	tag, err := AuthTag(cmd, c.PubKey())
+	if err != nil {
+		closeSigner()
+		return nil, nil, err
+	}
+	return WithAuth(c, tag), closeSigner, nil
 }
 
 // Relays reads -s/--relays, which these commands require: a private
@@ -214,9 +222,10 @@ func ReportError(cmd *cobra.Command, report *client.PublishReport) error {
 func PrintReportLines(cmd *cobra.Command, report *client.PublishReport) {
 	for _, r := range report.Results {
 		if r.Accepted {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "published %s to %s\n", r.ID, r.Relay)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "published %s to %s\n", r.ID, Inline(r.Relay))
 		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "failed %s to %s: %s\n", r.ID, r.Relay, r.Error)
+			// The relay's message is the relay's text.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "failed %s to %s: %s\n", r.ID, Inline(r.Relay), Inline(r.Error))
 		}
 	}
 }

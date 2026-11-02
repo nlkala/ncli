@@ -123,8 +123,15 @@ ncli relay members remove <pubkey>
 
 # issue a code to hand out out-of-band
 ncli relay invites create --ttl 24h --max-uses 1
+# absolute expiry instead of a TTL (unix seconds; must be future and within
+# membership.inviteMaxTTL) -- mutually exclusive with --ttl and --no-expiry
+ncli relay invites create --expires-at 1799999999 --max-uses 1
+# a code that never expires (requires membership.inviteAllowNoExpiry: true)
+ncli relay invites create --no-expiry --max-uses 1
 # every currently-stored code
 ncli relay invites list
+# one code's state (claim, expires_at, max_uses, uses), incl. expired/used-up
+ncli relay invites get <code>
 # idempotent
 ncli relay invites revoke <code>
 
@@ -203,9 +210,58 @@ is saved beside the store as `<store>.moderation.json` and survives a
 restart; it overrides `nip11.name`/`description`/`icon` from the config.
 
 With `membership.enabled`, also: `allowpubkey`, `unallowpubkey`,
-`listallowedpubkeys`, `createclaim` (optional code; generated when omitted),
+`listallowedpubkeys`, `createclaim`, `createclaimwithlimits`, `getclaim`,
 `listclaims`, `deleteclaim`, and the role methods `createrole`, `editrole`,
 `deleterole`, `assignrole`, `unassignrole`.
+
+Invite-code method shapes:
+
+- **`createclaim`** has two forms. `["<code>"]` stores a caller-chosen code
+  with the relay's configured defaults and answers `true`; a client-chosen
+  code must be **at least 16 characters** and use only `[A-Za-z0-9_-]`, else
+  it is refused. `[]` or `[""]` makes the relay generate a strong code and
+  return the full claim record (so an operator can read the code back). A code
+  that already exists is an error -- it is never silently overwritten.
+- **`createclaimwithlimits`** `["<code>", {…}]` -- a **PROPOSED NIP-86
+  addition** -- mints a code with an explicit `expires_at` (unix seconds; `0`
+  = never, only when `inviteAllowNoExpiry` is set) and/or `max_uses` (`>= 1`).
+  An absent field uses the relay default. `expires_at` must be in the future
+  and within `inviteMaxTTL`; a value outside policy, an unknown field, a
+  wrong-typed value, an empty/weak code, or a duplicate is an error and **no
+  code is created** -- the relay never silently clamps a requested limit.
+  Answers `true`.
+- **`getclaim`** `["<code>"]` -- a **PROPOSED NIP-86 addition** -- returns
+  `{"claim","expires_at","max_uses","uses"}` for any stored code, **including
+  expired or used-up ones**, until it is deleted. The output field is `claim`
+  (not the record's `code`). An unknown code is an error.
+- **`listclaims`** `[]` returns a plain list of **live** code strings only
+  (not expired, not used up). Use `getclaim` or the admin REST route to see a
+  dead code's record.
+
+Both proposed methods are detectable via `supportedmethods`, which a client
+MUST call with the **same key** it will use before offering per-invite limits.
+The set is scoped to the calling key: an admin's `supportedmethods` lists every
+method, whereas a plain member's lists only `createclaim` and
+`supportedmethods` (see member claims below).
+
+**Member claims (`membership.memberClaims`, bool, default true).** When
+membership is on and this is true, a plain member -- not only an admin -- may
+mint an invite via `createclaim`, per NIP-43. The member's NIP-98 key is
+accepted even though it is not an admin, and the Relay Management API then
+scopes it to exactly `createclaim` + `supportedmethods`; calling any other
+method (`listclaims`, `getclaim`, `createclaimwithlimits`, `deleteclaim`, the
+pubkey/role methods, or any moderation method) is refused as an unknown method.
+A member's code uses the relay's configured defaults and carries no roles.
+
+- A verified key that is neither an admin nor a member is still rejected with a
+  **401**, exactly as before.
+- **Risk / escape hatch:** there is **no per-member cap** on how many codes a
+  member may mint -- the invite record has no creator field to count against.
+  An operator who does not want members minting codes sets
+  `membership.memberClaims: false`; a member then gets a **401** from the
+  management API (admin-only, as it was before this feature) while invite
+  redemption on join (kind 28934) is unaffected. With membership off,
+  `memberClaims` has no effect.
 
 **`unallowpubkey` ends the member's live huddle calls**, not just their next
 join — the other participants stay connected. `ncli relay members remove`
@@ -514,6 +570,18 @@ Full route, metric and config reference: `references/admin-plane-reference.md`.
   `nip11.limitation.membership_required: true` additionally requires both
   `membership.enabled: true` and `nip11.limitation.auth_required: true`;
   missing either is a config-load-time error, not a runtime surprise.
+- Per-invite expiry/use limits (the `createclaimwithlimits` method and the
+  `invites create --expires-at/--no-expiry` flags) read two optional
+  `membership` keys: `inviteMaxTTL` (Go duration string, default `720h` = 30
+  days) caps how far in the future an explicit absolute expiry may be, and
+  `inviteAllowNoExpiry` (bool, default false) gates whether a never-expiring
+  code (`expires_at: 0`) is allowed at all. An unparseable or non-positive
+  `inviteMaxTTL` is a config-load-time error. A requested limit outside
+  policy is refused, never silently clamped. `memberClaims` (bool, default
+  true) lets a plain member mint a code via `createclaim` when membership is
+  on; set it false to keep the management API admin-only. See "Member claims"
+  under the Relay Management API section above, including the no-per-member-cap
+  note.
 - Turning on `nip11.limitation.membership_required` is a real behavior
   change, not just a new knob: EVENT publishing now checks that the
   *specific pubkey that signed the event* is authenticated on the

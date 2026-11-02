@@ -195,7 +195,28 @@ func matches(s *Selector, req *Request) bool {
 			return false
 		}
 	}
+	for name, patterns := range s.TagsOne {
+		if !oneTagMatches(req.Event, name, patterns) {
+			return false
+		}
+	}
 	return true
+}
+
+// oneTagMatches: the event has exactly one tag named name, with a value,
+// and that value matches a pattern.
+func oneTagMatches(ev *nip01.Event, name string, patterns []string) bool {
+	var found []string
+	for _, t := range ev.Tags {
+		if len(t) == 0 || t[0] != name {
+			continue
+		}
+		if len(t) < 2 || len(found) > 0 {
+			return false
+		}
+		found = append(found, t[1])
+	}
+	return len(found) == 1 && anyTagMatches(found, patterns)
 }
 
 func anyTagMatches(values, patterns []string) bool {

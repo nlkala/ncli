@@ -2349,7 +2349,7 @@ func TestBunkerBoardOverlayDoesNotBleedThroughToPanelBorders(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 
 	_, h := screen.Size()
-	cells, width, _ := screen.GetContents()
+	cells, width, _ := screenContents(app, screen)
 
 	// centerOverlay(box, 90, 85) on an 80-wide screen leaves a margin in
 	// columns 76..79; scanning that column range across every row also
@@ -2434,6 +2434,24 @@ func TestBunkerBoardAutoPromptSurvivesPreLoadRace(t *testing.T) {
 	}
 }
 
+// screenContents copies what the screen shows from inside the app's event
+// loop: GetContents hands back the screen's own buffer, which the loop's
+// next draw rewrites while a test reads it (a data race under -race).
+func screenContents(app *tui.App, screen tcell.SimulationScreen) ([]tcell.SimCell, int, int) {
+	var cells []tcell.SimCell
+	var w, h int
+	app.QueueUpdate(func() {
+		var front []tcell.SimCell
+		front, w, h = screen.GetContents()
+		cells = append([]tcell.SimCell(nil), front...)
+		for i := range cells {
+			cells[i].Runes = append([]rune(nil), cells[i].Runes...)
+			cells[i].Bytes = append([]byte(nil), cells[i].Bytes...)
+		}
+	})
+	return cells, w, h
+}
+
 // screenCellRune returns the rune at (x, y) in a GetContents() buffer, or
 // 0 if that cell is out of range or blank -- shared by tests that need to
 // check specific screen positions rather than scan a whole region.
@@ -2485,7 +2503,7 @@ func TestPendingTableSignEventApprovalOverlayFillsFullScreenNoMargin(t *testing.
 		t.Fatalf("sign_event approval overlay never opened, focus = %T", app.GetFocus())
 	}
 
-	cells, width, _ := screen.GetContents()
+	cells, width, _ := screenContents(app, screen)
 
 	// The dialog's own border should sit directly on the top row and the
 	// leftmost/rightmost columns -- a real margin (like the old 90/85
@@ -2560,7 +2578,7 @@ func TestHistoryTableShowEventDetailBorderStaysConsistentUnderConcurrency(t *tes
 	// this matters.
 	time.Sleep(2500 * time.Millisecond)
 
-	cells, width, h := screen.GetContents()
+	cells, width, h := screenContents(app, screen)
 
 	// The dialog's own content (header text, JSON, form) never legitimately
 	// contains box-drawing characters -- those only ever come from a
@@ -2638,7 +2656,7 @@ func TestPendingTableShowBunkerURIActsLikeARealModal(t *testing.T) {
 	x, y, w, h := positionedOverlayRectFixedHeight(app, 100, 12)
 	t.Logf("expected dialog rect: x=%d y=%d w=%d h=%d (screen 160x45)", x, y, w, h)
 
-	cells, width, height := screen.GetContents()
+	cells, width, height := screenContents(app, screen)
 
 	// The dialog's own title should be findable somewhere on its own top
 	// border row.

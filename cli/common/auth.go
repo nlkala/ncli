@@ -20,17 +20,18 @@ import (
 // a request that carries no body.
 func GenerateNIP98Header(privKey, url, method string, body []byte) (string, error) {
 	sum := sha256.Sum256(body)
-	// The nonce keeps two identical requests in the same second distinct,
+	// The salt keeps two identical requests in the same second distinct,
 	// so a relay rejecting replayed event ids doesn't reject the second.
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("failed to generate NIP-98 nonce: %w", err)
+	// Not "nonce": NIP-13 reads a nonce tag as a proof-of-work claim.
+	var salt [16]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		return "", fmt.Errorf("failed to generate NIP-98 salt: %w", err)
 	}
 	event := nip01.NewEvent(27235, "",
 		[]string{"u", url},
 		[]string{"method", method},
 		[]string{"payload", hex.EncodeToString(sum[:])},
-		[]string{"nonce", hex.EncodeToString(nonce[:])},
+		[]string{"salt", hex.EncodeToString(salt[:])},
 	)
 
 	if err := event.Sign(privKey); err != nil {

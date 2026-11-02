@@ -21,12 +21,28 @@ import (
 // feed.
 var ErrFollowLocal = errors.New("--follow needs relay targets, not a local .db file")
 
-// maxSeen bounds the ids a FollowState remembers.
-const maxSeen = 5000
+// maxSeen bounds the delivered ids a FollowState remembers, and
+// maxSeenOnly the ids of events it only saw (gift wraps that didn't open).
+// They are two lists, so junk never pushes a delivered id out (a restart
+// would print that message again).
+const (
+	maxSeen     = 5000
+	maxSeenOnly = 5000
+)
 
 // ErrSkip, returned by FollowOptions.Emit, leaves an event unrecorded in the
 // state: it is neither printed nor remembered, so a later run looks again.
 var ErrSkip = errors.New("skip")
+
+// ErrSeenOnly, returned by FollowOptions.Emit, records an event's id as
+// delivered but leaves the relay's since where it was: an event that could
+// not be opened or verified says nothing true about its time, and a junk
+// one dated a year ahead must not make every later subscription ask only
+// for events from then on.
+var ErrSeenOnly = errors.New("seen only")
+
+// sinceNow is the clock a since is held to; tests move it.
+var sinceNow = time.Now
 
 // FollowState is what a follow has delivered, so a restart resumes where it
 // stopped: recently seen ids and, per relay, the newest created_at seen.
@@ -36,21 +52,27 @@ type FollowState struct {
 	path string
 	mu   sync.Mutex
 
-	seen  map[string]bool
-	order []string
-	since map[string]int64
-	dirty bool
+	seen      map[string]bool // delivered
+	order     []string
+	only      map[string]bool // seen only, never delivered
+	onlyOrder []string
+	since     map[string]int64
+	dirty     bool
 }
 
+// followStateFile is the state on disk. A file from an older ncli has no
+// seen_only: its seen holds both kinds, all kept as delivered.
 type followStateFile struct {
-	Seen  []string         `json:"seen"`
-	Since map[string]int64 `json:"since"`
+	Seen     []string         `json:"seen"`
+	SeenOnly []string         `json:"seen_only,omitempty"`
+	Since    map[string]int64 `json:"since"`
 }
 
 // LoadFollowState reads path; a missing file is an empty state. path ""
 // keeps the state in memory only.
 func LoadFollowState(path string) (*FollowState, error) {
-	s := &FollowState{path: path, seen: map[string]bool{}, since: map[string]int64{}}
+	s := &FollowState{path: path, seen: map[string]bool{}, only: map[string]bool{},
+		since: map[string]int64{}}
 	if path == "" {
 		return s, nil
 	}
@@ -68,7 +90,19 @@ func LoadFollowState(path string) (*FollowState, error) {
 	for _, id := range f.Seen {
 		s.add(id)
 	}
+	for _, id := range f.SeenOnly {
+		s.addOnly(id)
+	}
+	// A since in the future (an older ncli recorded a junk event's
+	// created_at) would blind every later subscription: forget it, so the
+	// next one reads from its filter's own since again (delivery is at
+	// least once; seen ids are not repeated).
+	now := sinceNow().Unix()
 	for k, v := range f.Since {
+		if v > now {
+			s.dirty = true
+			continue
+		}
 		s.since[k] = v
 	}
 	return s, nil
@@ -86,25 +120,58 @@ func (s *FollowState) add(id string) {
 	}
 }
 
-// Seen reports whether id was delivered.
+func (s *FollowState) addOnly(id string) {
+	if s.seen[id] || s.only[id] {
+		return
+	}
+	s.only[id] = true
+	s.onlyOrder = append(s.onlyOrder, id)
+	if len(s.onlyOrder) > maxSeenOnly {
+		delete(s.only, s.onlyOrder[0])
+		s.onlyOrder = s.onlyOrder[1:]
+	}
+}
+
+func (s *FollowState) known(id string) bool { return s.seen[id] || s.only[id] }
+
+// Seen reports whether id was delivered or seen only.
 func (s *FollowState) Seen(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.seen[id]
+	return s.known(id)
 }
 
 // Mark records id as delivered from relay. It reports false if id was
-// already delivered.
+// already delivered. The relay's since moves up to createdAt, but never
+// past now: an event dated ahead can't make a resume skip what comes later.
 func (s *FollowState) Mark(id, relay string, createdAt int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.seen[id] {
+	if s.known(id) {
 		return false
 	}
 	s.add(id)
+	if now := sinceNow().Unix(); createdAt > now {
+		createdAt = now
+	}
 	if createdAt > s.since[relay] {
 		s.since[relay] = createdAt
 	}
+	s.dirty = true
+	return true
+}
+
+// MarkSeen records id as delivered without moving any since: for an event
+// whose time can't be trusted (a gift wrap that didn't open). It goes to
+// its own bounded list, so no amount of junk pushes a delivered id out. It
+// reports false if id was already known.
+func (s *FollowState) MarkSeen(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.known(id) {
+		return false
+	}
+	s.addOnly(id)
 	s.dirty = true
 	return true
 }
@@ -123,7 +190,8 @@ func (s *FollowState) Save() error {
 		s.mu.Unlock()
 		return nil
 	}
-	f := followStateFile{Seen: append([]string(nil), s.order...), Since: map[string]int64{}}
+	f := followStateFile{Seen: append([]string(nil), s.order...),
+		SeenOnly: append([]string(nil), s.onlyOrder...), Since: map[string]int64{}}
 	for k, v := range s.since {
 		f.Since[k] = v
 	}
@@ -367,17 +435,39 @@ func (f *follower) resumeFilters(relay string) *nip01.SubscriptionFilterGroup {
 
 // stream runs one live subscription on sess until it drops. As for a
 // one-shot read, a login only matters once the relay refuses the REQ for
-// want of one.
+// want of one. Its stored events are paged back past the relay's cap
+// (followpage.go) while the live ones keep coming.
 func (f *follower) stream(ctx context.Context, sess *relaySession, relay string) error {
 	subID := uuid.NewString()
+	var pg *followPager
 	subscribe := func() error {
-		if !sess.conn.SubscribeWithID(subID, f.resumeFilters(relay)) {
+		filters := f.resumeFilters(relay)
+		pg = newFollowPager(filters)
+		pg.restart()
+		if !sess.conn.SubscribeWithID(subID, filters) {
 			return relayclient.ErrConnectionClosed
 		}
 		return nil
 	}
 	if err := subscribe(); err != nil {
 		return err
+	}
+	// page asks the next page of stored events (until the oldest the last
+	// one brought), or ends the paging
+	page := func() error {
+		if until, ok := pg.next(); ok {
+			if !sess.conn.SubscribeWithID(pg.sub, pg.filters(until)) {
+				return relayclient.ErrConnectionClosed
+			}
+		} else {
+			if pg.cut != "" {
+				f.opts.Warn(relay, errors.New(pg.cut))
+			}
+			if followPaged != nil {
+				followPaged(relay)
+			}
+		}
+		return nil
 	}
 	retried := false
 	for {
@@ -391,13 +481,35 @@ func (f *follower) stream(ctx context.Context, sess *relaySession, relay string)
 			}
 			switch m := msg.(type) {
 			case *wire.EventSubscriptionResponse:
-				if m.SubscriptionID != subID || m.Event == nil || m.Event.Verify(nip01.WithoutPowCheck()) != nil {
+				if (m.SubscriptionID != subID && m.SubscriptionID != pg.sub) || m.Event == nil || m.Event.Verify(nip01.WithoutPowCheck()) != nil {
 					continue
+				}
+				if m.SubscriptionID == pg.sub || pg.stored {
+					pg.saw(m.Event)
 				}
 				if err := f.emit(m.Event, relay); err != nil {
 					return err
 				}
+			case *wire.EOSESubscriptionResponse:
+				switch {
+				case m.SubscriptionID == subID && pg.stored:
+					pg.stored = false // live from here on
+					if err := page(); err != nil {
+						return err
+					}
+				case m.SubscriptionID == pg.sub && pg.sub != "":
+					sess.conn.CloseSubscription(pg.sub)
+					if err := page(); err != nil {
+						return err
+					}
+				}
 			case *wire.ClosedSubscriptionResponse:
+				if m.SubscriptionID == pg.sub && pg.sub != "" {
+					// a page refused: the live subscription goes on, the rest unpaged
+					f.opts.Warn(relay, fmt.Errorf("relay closed a page of stored events: %s", m.Message))
+					pg.stop()
+					continue
+				}
 				if m.SubscriptionID != subID {
 					continue
 				}
@@ -427,7 +539,8 @@ func (f *follower) stream(ctx context.Context, sess *relaySession, relay string)
 }
 
 // emit hands ev to Emit once. It is recorded as delivered only after Emit
-// succeeds; ErrSkip leaves it unrecorded, to be looked at again.
+// succeeds; ErrSkip leaves it unrecorded, to be looked at again; ErrSeenOnly
+// records its id but not its time.
 func (f *follower) emit(ev *nip01.Event, relay string) error {
 	f.emitMu.Lock()
 	defer f.emitMu.Unlock()
@@ -437,6 +550,9 @@ func (f *follower) emit(ev *nip01.Event, relay string) error {
 	err := f.opts.Emit(ev, relay)
 	switch {
 	case errors.Is(err, ErrSkip):
+		return nil
+	case errors.Is(err, ErrSeenOnly):
+		f.opts.State.MarkSeen(ev.ID)
 		return nil
 	case err != nil:
 		return fmt.Errorf("%w: %w", errEmit, err)
