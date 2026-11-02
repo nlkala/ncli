@@ -15,6 +15,7 @@ that priority order.
 | `ncli dump -o <out.json>` | Export events to JSON from a relay, `.db` file, or prefs relays |
 | `ncli find <id>` / `-t <targets.yaml>` | Look up events by ID (hex/note/nevent) or author (npub/nprofile/nip-05), and/or filter, across targets; `-f/--follow` keeps the subscription open and prints each new event once as a JSON line (`--state <file>` resumes after a restart without gaps or repeats) |
 | `ncli dm send/read/prove/verify` | NIP-17 private messages through `--signer`: `send --to <who>` seals and gift-wraps (plus a copy to yourself); `read --from <who>...` opens only those senders' seals (`-f`, `--state`, `-S`); `prove` gives a third party one message (seal + that payload's message keys) and `verify` checks it with no key. `-s/--relays` is required |
+| `ncli form create/list/show/respond/withdraw/result` | NIP-PF forms through `--signer`: questions with the recommended option and why, answered in one response (the latest counts) and closed by the author with a result (decided, default, cancelled). Private (`--to`: gift-wrapped to each responder and to you), in a NIP-29 group (`--group --relay`) or public; a response the form refuses is refused before anything is sent |
 | `ncli profile set` / `relays set` / `follow` / `unfollow` / `mute` / `unmute` | Publish your profile (kind 0), relay lists (10002, DM 10050), follows (3) or mutes (10000) through `--signer`: each reads your current version and changes only what you name (`relays set` replaces the list it names, reporting what it drops); nothing is published unless every relay answers, or (without `--create`) if none has one, and never a list without people unless `--allow-empty` |
 | `ncli profile <identifier>` | Readable profile card for one identity — metadata, following count, relay list, Blossom servers, lightning address, and NIP-85 stats (rank, followers, zaps) from any relay that serves them — aggregated across every relay (not stopping at the first hit like `find`) |
 | `ncli event verify/get/show <ref...>` | Verify any event's id and signature (plus author, kind, PoW, expiration, delegation, zap, `--deleted`, `--cross-relays`), print it raw, or show it as a card -- from an nevent/note/naddr/hex id/`kind:pubkey:d`, event JSON, `-f` files or stdin, looked up on the reference's relay hints, `-s` (or prefs) and the author's NIP-65 outbox; no identity needed. `verify` exits 1 if any event is invalid |
@@ -75,6 +76,7 @@ status`/`index`/`jobs`/`verify`/`metrics token`, `relay members`/`invites`/`role
 `connect`/`history`/`sessions`/`pending`, `signer status`/`check`, `event verify`/`show`/`encode`/`seen`/
 `rebroadcast`/`thread`/`diff`/`unwrap`/`validate`/`react`/`reply`/`post`/`repost`/`delete`, `groups create`/`edit`/`delete`/`invite`/`join`/`leave`/
 `members`/`pins`/`delete-event`/`list`/`show`/`send`/`read`/`feed`, `dm send`/`read`/`verify`,
+`form create`/`list`/`show`/`respond`/`withdraw`/`result`,
 `profile set`/`relays set`/`follow`/`unfollow`/`mute`/`unmute`, and `prefs relays add`/
 `remove`/`list`/`clear`/`prefs path` are human-readable text by default
 and switch their *success* output to structured JSON on stdout with
@@ -220,6 +222,9 @@ or invoking a command in that area:
   reactions, replies and posts (`event react/reply/post/repost/delete`),
   your own profile and lists (`profile set/relays set/follow/mute`), or
   waiting for new events (`find -f`) → `skills/ncli-messaging/SKILL.md`
+- Asking or answering NIP-PF forms: questions with a recommended option,
+  answered in one response, closed with a result (`form create/list/show/
+  respond/withdraw/result`) → `skills/ncli-forms/SKILL.md`
 
 These skills assume only the `ncli` binary is available — no access to this
 source tree. Each is also built into the binary: `ncli skills show <name>`
