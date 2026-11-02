@@ -68,13 +68,6 @@ type place struct {
 	timeout time.Duration
 }
 
-func (p place) where() string {
-	if p.group != "" {
-		return "group"
-	}
-	return "relays"
-}
-
 func addPlaceFlags(cmd *cobra.Command) {
 	cmd.Flags().String("group", "", "A NIP-29 group's id: the form is in that group (with --relay)")
 	cmd.Flags().String("relay", "", "The group's relay (with --group)")

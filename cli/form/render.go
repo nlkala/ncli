@@ -31,19 +31,38 @@ func when(unix int64) string {
 	return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04Z")
 }
 
+// Every field of a form, a response or a result is its author's text, ids
+// and pubkeys included: text output prints them through social.Inline (one
+// line, control and format runes escaped) or social.WriteBlock (several
+// lines, each indented), never raw.
+
+// esc is a field on one line, escaped.
+func esc(s string) string { return social.Inline(s) }
+
+// npub is a pubkey as an npub, escaped (one that isn't hex prints as is).
+func npub(hex string) string { return esc(social.Npub(hex)) }
+
 func short(hex string) string {
 	n := social.Npub(hex)
-	if len(n) > 16 {
-		return n[:12] + "…" + n[len(n)-4:]
+	if r := []rune(n); len(r) > 16 {
+		n = string(r[:12]) + "…" + string(r[len(r)-4:])
 	}
-	return n
+	return esc(n)
 }
 
 func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
+	if r := []rune(id); len(r) > 12 {
+		id = string(r[:12])
 	}
-	return id
+	return esc(id)
+}
+
+func escAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, v := range ss {
+		out[i] = esc(v)
+	}
+	return out
 }
 
 // stateLine: the state, with the end and where the form lives.
@@ -55,9 +74,9 @@ func stateLine(v *View) string {
 	}
 	switch v.Where {
 	case "group":
-		s += ", in group " + f.Group
+		s += ", in group " + esc(f.Group)
 	default:
-		s += ", " + v.Where
+		s += ", " + esc(v.Where)
 	}
 	if f.Priority {
 		s += ", priority high"
@@ -90,7 +109,7 @@ func listLine(v *View) string {
 	if you != "" {
 		parts = append(parts, you)
 	}
-	return fmt.Sprintf("%s  %s  (%s)", shortID(f.ID), f.Title, strings.Join(parts, "; "))
+	return fmt.Sprintf("%s  %s  (%s)", shortID(f.ID), esc(f.Title), strings.Join(parts, "; "))
 }
 
 // writeView prints one form in full: what it asks, the tally and notes, the
@@ -98,28 +117,29 @@ func listLine(v *View) string {
 func writeView(w io.Writer, v *View) {
 	f := v.Form
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	p("form %s by %s, %s (%s)\n", f.ID, social.Npub(f.Author), when(f.CreatedAt), stateLine(v))
-	p("\n%s\n", f.Title)
+	p("form %s by %s, %s (%s)\n", esc(f.ID), npub(f.Author), when(f.CreatedAt), stateLine(v))
+	p("\n%s\n", esc(f.Title))
 	if f.Context != "" {
-		p("\n%s\n", f.Context)
+		p("\n")
+		social.WriteBlock(w, "  ", f.Context)
 	}
 	for _, e := range f.Events {
-		p("about: event %s\n", e)
+		p("about: event %s\n", esc(e))
 	}
 	for _, a := range f.Addrs {
-		p("about: %s\n", a)
+		p("about: %s\n", esc(a))
 	}
 	if rs := f.Responders(); len(rs) > 0 {
 		names := make([]string, 0, len(rs))
 		for _, r := range rs {
-			names = append(names, social.Npub(r))
+			names = append(names, npub(r))
 		}
 		p("responders: %s\n", strings.Join(names, ", "))
 	}
 	if os := f.Observers(); len(os) > 0 {
 		names := make([]string, 0, len(os))
 		for _, o := range os {
-			names = append(names, social.Npub(o))
+			names = append(names, npub(o))
 		}
 		p("observers: %s\n", strings.Join(names, ", "))
 	}
@@ -135,22 +155,22 @@ func writeView(w io.Writer, v *View) {
 	}
 	for _, q := range f.Questions {
 		qt := tallyOf(v.Tally, q.Index)
-		p("\n[%d] %s (%s", q.Index, q.Text, q.Type)
+		p("\n[%d] %s (%s", q.Index, esc(q.Text), esc(q.Type))
 		if q.Optional {
 			p(", optional")
 		}
 		if q.Min != "" {
-			p(", min %s", q.Min)
+			p(", min %s", esc(q.Min))
 		}
 		if q.Max != "" {
-			p(", max %s", q.Max)
+			p(", max %s", esc(q.Max))
 		}
 		p(")\n")
 		if q.Why != "" {
-			p("    why: %s\n", q.Why)
+			p("    why: %s\n", esc(q.Why))
 		}
 		for _, o := range q.Options {
-			p("    - %s: %s", o.ID, o.Label)
+			p("    - %s: %s", esc(o.ID), esc(o.Label))
 			if o.Rec {
 				p("  [recommended]")
 			}
@@ -163,18 +183,18 @@ func writeView(w io.Writer, v *View) {
 			p("\n")
 			if qt != nil {
 				for _, n := range qt.Notes[o.ID] {
-					p("        %s: %s\n", short(n.PubKey), n.Text)
+					p("        %s: %s\n", short(n.PubKey), esc(n.Text))
 				}
 			}
 		}
 		if len(q.Defaults) > 0 {
-			p("    default: %s\n", strings.Join(q.Defaults, ", "))
+			p("    default: %s\n", strings.Join(escAll(q.Defaults), ", "))
 		}
 		if qt != nil {
 			for _, a := range qt.Answers {
-				p("    %s: %s", short(a.PubKey), a.Value)
+				p("    %s: %s", short(a.PubKey), esc(a.Value))
 				if a.Note != "" {
-					p(" (%s)", a.Note)
+					p(" (%s)", esc(a.Note))
 				}
 				p("\n")
 			}
@@ -184,7 +204,7 @@ func writeView(w io.Writer, v *View) {
 	if len(v.Waiting) > 0 {
 		names := make([]string, 0, len(v.Waiting))
 		for _, k := range v.Waiting {
-			names = append(names, social.Npub(k))
+			names = append(names, npub(k))
 		}
 		p("; not answered: %s", strings.Join(names, ", "))
 	}
@@ -193,13 +213,13 @@ func writeView(w io.Writer, v *View) {
 		p("your response (%s): %s\n", when(v.Mine.CreatedAt), describe(v.Mine.Choices, v.Mine.Answers))
 	}
 	if r := v.Result; r != nil {
-		p("result: %s at %s", r.Status, when(r.CreatedAt))
+		p("result: %s at %s", esc(string(r.Status)), when(r.CreatedAt))
 		if d := describe(r.Choices, r.Answers); d != "" {
 			p(" — %s", d)
 		}
 		p("\n")
 		if r.Content != "" {
-			p("    %s\n", r.Content)
+			social.WriteBlock(w, "    ", r.Content)
 		}
 	}
 	switch {
@@ -226,16 +246,16 @@ func tallyOf(t *nippf.Tally, index int) *nippf.QuestionTally {
 func describe(cs []nippf.Choice, as []nippf.Answer) string {
 	var parts []string
 	for _, c := range cs {
-		s := c.Option
+		s := esc(c.Option)
 		if c.Note != "" {
-			s += fmt.Sprintf(" (%s)", c.Note)
+			s += fmt.Sprintf(" (%s)", esc(c.Note))
 		}
 		parts = append(parts, s)
 	}
 	for _, a := range as {
-		s := fmt.Sprintf("[%d]=%s", a.Question, a.Value)
+		s := fmt.Sprintf("[%d]=%s", a.Question, esc(a.Value))
 		if a.Note != "" {
-			s += fmt.Sprintf(" (%s)", a.Note)
+			s += fmt.Sprintf(" (%s)", esc(a.Note))
 		}
 		parts = append(parts, s)
 	}

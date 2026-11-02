@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/nmilat/nippf"
 )
 
@@ -68,21 +69,22 @@ func typeHint(typ string) string {
 // The answers are checked as a whole by nippf when the response is built.
 func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choice, []nippf.Answer, error) {
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	p("%s\n", f.Title)
+	p("%s\n", esc(f.Title))
 	if f.Context != "" {
-		p("\n%s\n", f.Context)
+		p("\n")
+		social.WriteBlock(w, "  ", f.Context)
 	}
 	var cs []nippf.Choice
 	var as []nippf.Answer
 	for _, q := range f.Questions {
-		p("\n[%d] %s", q.Index, q.Text)
+		p("\n[%d] %s", q.Index, esc(q.Text))
 		if q.Optional {
 			p(" (optional: Enter skips)")
 		}
 		p("\n")
 		if q.Choice() {
 			for i, o := range q.Options {
-				p("  %d) %s", i+1, o.Label)
+				p("  %d) %s", i+1, esc(o.Label))
 				if o.Rec {
 					p("  — recommended")
 				}
@@ -92,10 +94,10 @@ func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choic
 				p("\n")
 			}
 			if q.Why != "" {
-				p("  why recommended: %s\n", q.Why)
+				p("  why recommended: %s\n", esc(q.Why))
 			}
 			if len(q.Defaults) > 0 {
-				p("  if nobody decides: %s\n", strings.Join(q.Defaults, ", "))
+				p("  if nobody decides: %s\n", strings.Join(escAll(q.Defaults), ", "))
 			}
 			how := "choose one (number or id)"
 			if q.Type == nippf.TypeMulti {
@@ -136,7 +138,7 @@ func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choic
 				}
 				switch {
 				case bad != "":
-					p("  %q is no option of this question\n", bad)
+					p("  %s is no option of this question\n", strconv.QuoteToASCII(bad))
 				case q.Type == nippf.TypeSingle && len(chosen) != 1:
 					p("  choose exactly one\n")
 				case len(chosen) == 0:
@@ -148,9 +150,9 @@ func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choic
 			for _, o := range chosen {
 				c := nippf.Choice{Option: o.ID}
 				for {
-					prompt := fmt.Sprintf("  a note on %q (Enter for none): ", o.Label)
+					prompt := fmt.Sprintf("  a note on %s (Enter for none): ", strconv.QuoteToASCII(o.Label))
 					if o.NoteRequired {
-						prompt = fmt.Sprintf("  your note on %q (required): ", o.Label)
+						prompt = fmt.Sprintf("  your note on %s (required): ", strconv.QuoteToASCII(o.Label))
 					}
 					s, err := line(w, in, prompt)
 					if err != nil {
@@ -167,17 +169,17 @@ func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choic
 			continue
 		}
 		if q.Why != "" {
-			p("  why: %s\n", q.Why)
+			p("  why: %s\n", esc(q.Why))
 		}
 		bounds := ""
 		if q.Min != "" {
-			bounds += " from " + q.Min
+			bounds += " from " + esc(q.Min)
 		}
 		if q.Max != "" {
-			bounds += " to " + q.Max
+			bounds += " to " + esc(q.Max)
 		}
 		if len(q.Defaults) > 0 {
-			p("  if nobody decides: %s\n", strings.Join(q.Defaults, ", "))
+			p("  if nobody decides: %s\n", strings.Join(escAll(q.Defaults), ", "))
 		}
 		for {
 			s, err := line(w, in, fmt.Sprintf("%s%s: ", typeHint(q.Type), bounds))

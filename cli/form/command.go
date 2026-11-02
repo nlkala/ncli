@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"slices"
@@ -179,7 +178,7 @@ func runCreate(cmd *cobra.Command, _ []string) error {
 	}
 	var spec *Spec
 	if path, _ := cmd.Flags().GetString("spec"); path != "" {
-		var r io.Reader = cmd.InOrStdin()
+		r := cmd.InOrStdin()
 		if path != "-" {
 			fh, err := os.Open(path)
 			if err != nil {
