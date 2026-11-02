@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixes the signer charging an `unwrap_from` rule's rate before it knew the seal's author, so gift wraps from anyone could use up a listed sender's rate. The rate is charged only for a wrap the rule releases; refused wraps are remembered and refused again without decryption; `dm read` retries a wrap refused for rate instead of skipping it.
+- Fixes `find -f` and `dm read -f` losing messages: a gift wrap that didn't open (or was dated in the future) no longer moves the resume point, a saved resume point ahead of now is dropped, and a resubscription pages back through a relay's stored events past its per-request cap, so a backdated wrap under a flood is still delivered.
 
 ## [0.8.0-rc.46]
 
