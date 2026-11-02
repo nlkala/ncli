@@ -8,6 +8,7 @@
 - Adds `ncli form create/list/show/respond/withdraw/result`: NIP-PF forms (kinds 1069, 1019, 1070) -- questions with the recommended option and why, notes required on some options, defaults, quorum and an end, answered in one response and closed by the author with a result (decided, default, cancelled). A form is private (`--to`: gift-wrapped to each responder and to you), in a NIP-29 group (`--group --relay`) or public; `respond` refuses a response the form doesn't accept before anything is sent. Every rule is nmilat's `nippf`.
 - Adds the `ncli-forms` skill.
 - Adds labels to `dm` and `form`: an event's `t` tags print as `#label` (printable ASCII, every other rune escaped) after the author and before the subject or title, and `dm send --label` sets them.
+- Adds `--auth` (and `NCLI_AUTH_TAG`) to every command that signs through `--signer`: a NIP-OA `auth` tag, checked against the signer's key, added to every event it signs whose kind and time its conditions allow -- on a DM's or a private form's rumor too, inside the seal; never on a seal or a gift wrap.
 
 ### Fixed
 
