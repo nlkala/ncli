@@ -145,7 +145,10 @@ func statsLines(s profileStats, providers int) []string {
 	lines := []string{fmt.Sprintf("  %s          %s", profileSectionStyle.Render("Stats"), profileDimStyle.Render(by))}
 	num := func(name string) string {
 		if v, ok := s.Tags[name]; ok {
-			return withThousands(v)
+			// A NIP-85 stat value is the provider's text: withThousands groups
+			// digits in any string without checking it's numeric, so escape the
+			// result before it reaches the terminal.
+			return social.Inline(withThousands(v))
 		}
 		return "?"
 	}
@@ -172,7 +175,9 @@ func shortHex(h string) string {
 func unixDate(s string) string {
 	var ts int64
 	if _, err := fmt.Sscan(s, &ts); err != nil || ts <= 0 {
-		return s
+		// Fallback echoes the provider's raw value -- escape it so a
+		// non-timestamp can't carry control or bidi runes to the terminal.
+		return social.Inline(s)
 	}
 	return time.Unix(ts, 0).UTC().Format("2006-01-02")
 }
