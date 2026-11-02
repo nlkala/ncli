@@ -5,6 +5,8 @@
 ### Added
 
 - Adds `dm react` and `dm unreact`: NIP-25 reactions and their NIP-09 retractions inside NIP-17 gift wraps, to the conversation's participants and a copy to yourself. `dm read` shows them as `reaction` / `delete` entries, and `--fold` applies the deletions (each only to its own author's events) and folds reactions into the messages they react to.
+- Adds `ncli form create/list/show/respond/withdraw/result`: NIP-PF forms (kinds 1069, 1019, 1070) -- questions with the recommended option and why, notes required on some options, defaults, quorum and an end, answered in one response and closed by the author with a result (decided, default, cancelled). A form is private (`--to`: gift-wrapped to each responder and to you), in a NIP-29 group (`--group --relay`) or public; `respond` refuses a response the form doesn't accept before anything is sent. Every rule is nmilat's `nippf`.
+- Adds the `ncli-forms` skill.
 
 ### Fixed
 
