@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip53"
@@ -96,19 +97,19 @@ func runShow(cmd *cobra.Command, args []string) error {
 }
 
 func printSpaceDetail(s spaceSummary) {
-	fmt.Printf("address:    %s\n", s.Address)
-	fmt.Printf("status:     %s\n", s.Status)
+	fmt.Printf("address:    %s\n", social.Inline(s.Address))
+	fmt.Printf("status:     %s\n", social.Inline(s.Status))
 	fmt.Printf("live:       %s\n", liveLabel(s.Live))
-	fmt.Printf("service:    %s\n", s.Service)
+	fmt.Printf("service:    %s\n", social.Inline(s.Service))
 	if s.Endpoint != "" {
-		fmt.Printf("endpoint:   %s\n", s.Endpoint)
+		fmt.Printf("endpoint:   %s\n", social.Inline(s.Endpoint))
 	}
-	fmt.Printf("summary:    %s\n", dashIfEmpty(s.Summary))
+	fmt.Printf("summary:    %s\n", social.Inline(dashIfEmpty(s.Summary)))
 	if len(s.Hashtags) > 0 {
-		fmt.Printf("hashtags:   %s\n", strings.Join(s.Hashtags, ", "))
+		fmt.Printf("hashtags:   %s\n", social.Inline(strings.Join(s.Hashtags, ", ")))
 	}
 	if len(s.Hosts) > 0 {
-		fmt.Printf("hosts:      %s\n", strings.Join(s.Hosts, ", "))
+		fmt.Printf("hosts:      %s\n", social.Inline(strings.Join(s.Hosts, ", ")))
 	}
 	if len(s.Sessions) == 0 {
 		fmt.Println("sessions:   (none live)")
@@ -116,7 +117,7 @@ func printSpaceDetail(s spaceSummary) {
 	}
 	fmt.Println("sessions:")
 	for _, session := range s.Sessions {
-		fmt.Printf("  %s\t%s\t%s peers\n", session.Identifier, titleOrDash(session.Title), peersOrDash(session.Participants))
+		fmt.Printf("  %s\t%s\t%s peers\n", social.Inline(session.Identifier), social.Inline(titleOrDash(session.Title)), peersOrDash(session.Participants))
 	}
 }
 

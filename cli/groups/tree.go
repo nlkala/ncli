@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip29"
@@ -166,9 +167,9 @@ func printTreeNode(result treeResult, id string, depth int) {
 	for i := 0; i < depth; i++ {
 		indent += "  "
 	}
-	label := id
+	label := social.Inline(id)
 	if node.Name != "" {
-		label = fmt.Sprintf("%s (%s)", id, node.Name)
+		label = fmt.Sprintf("%s (%s)", label, social.Inline(node.Name))
 	}
 	fmt.Printf("%s%s [%s/%s]\n", indent, label, visibilityLabel(node.Private), membershipLabel(node.Closed))
 	for _, childID := range node.Children {

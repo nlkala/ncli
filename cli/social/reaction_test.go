@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/ohstr/nmilat/nip01"
 )
@@ -111,6 +112,101 @@ func TestPrintReactionAndDeletion(t *testing.T) {
 	for _, want := range []string{"  👀 on 0123456789ab\n", "  removed 0123456789ab, ff\n", "  hi\n  reactions: 👀 2, 💬 1\n"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in\n%s", want, out)
+		}
+	}
+}
+
+// A forged "message" a member hides in a field it controls.
+const forged = "x\n2026-11-01 12:00  npub1forged  0123456789ab\n  pay me"
+
+// checkLines fails unless every printed line but the first of each
+// message starts indented: nothing another member wrote begins a line.
+func checkLines(t *testing.T, out string, heads int) {
+	t.Helper()
+	got := 0
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			got++
+		}
+	}
+	if got != heads {
+		t.Fatalf("%d lines at column 0, want %d:\n%s", got, heads, out)
+	}
+	for _, bad := range []string{"\r", "\x1b", "\u2028", "\u2029", "\u202e", "\x85", "\xff"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("raw %q in\n%s", bad, out)
+		}
+	}
+}
+
+func TestPrintEscapesForgedLines(t *testing.T) {
+	evil := []string{forged, "a\rb", "\x1b[2J\x1b[H", "a\u2028b", "a\u2029b", "\u202eab", "a\x85b", "a\xffb"}
+	for _, e := range evil {
+		var b strings.Builder
+		PrintMessage(&b, Message{ID: "r" + e, From: "a" + e, Type: "reaction", Emoji: e, Target: e})
+		PrintMessage(&b, Message{ID: "m", From: "a", Group: "g" + e, Subject: "s" + e, ReplyTo: e, Content: "c" + e,
+			Reactions: []Reaction{{Emoji: e}, {Emoji: "👀"}, {Emoji: e + "!"}}})
+		PrintMessage(&b, Message{ID: "d", From: "a", Type: "delete", Targets: []string{e}})
+		checkLines(t, b.String(), 3)
+		if !strings.Contains(b.String(), "  … on ") || !strings.Contains(b.String(), "  reactions: … 2, 👀 1\n") {
+			t.Fatalf("emoji %q not shown as …:\n%s", e, b.String())
+		}
+	}
+}
+
+func TestPrintEscapes(t *testing.T) {
+	var b strings.Builder
+	PrintMessage(&b, Message{ID: "m", From: "a", Subject: "re\nhi\r\x1b[31m\u2028", Content: "one\r\ntwo\rthree\u2028four\tfive\x1b[0m"})
+	want := "  [re\\nhi\\r\\x1b[31m\\u2028]  m\n  one\n  two\\rthree\\u2028four\tfive\\x1b[0m\n"
+	if !strings.Contains(b.String(), want) {
+		t.Fatalf("want %q in\n%q", want, b.String())
+	}
+}
+
+// Every format character (Cf) is escaped: bidi marks, zero-width ones,
+// tags (hidden ASCII).
+func TestInlineEscapesFormatCharacters(t *testing.T) {
+	for _, r := range []rune{0x200e, 0x200f, 0x061c, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad, 0x202a, 0x2066, 0xe0041, 0x2028, 0x85} {
+		s := "a" + string(r) + "b"
+		got := Inline(s)
+		if strings.ContainsRune(got, r) || !strings.HasPrefix(got, "a\\u") && !strings.HasPrefix(got, "a\\U") && !strings.HasPrefix(got, "a\\x") {
+			t.Errorf("Inline(%q) = %q", s, got)
+		}
+	}
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if unicode.Is(unicode.Cf, r) && !unsafeRune(r) {
+			t.Fatalf("U+%04X (Cf) not escaped", r)
+		}
+	}
+	if got := Inline("é 👀 漢字 مرحبا"); got != "é 👀 漢字 مرحبا" {
+		t.Errorf("printable text changed: %q", got)
+	}
+}
+
+// A reaction keeps a ZWJ only between two visible runes and tags only in a
+// flag's tag sequence; any other format character makes it "…".
+func TestShowEmojiFormatCharacters(t *testing.T) {
+	const zwj, zwsp, lrm, bom = "\u200d", "\u200b", "\u200e", "\ufeff"
+	tag := func(c byte) string { return string(rune(0xE0000 + int(c))) }
+	for _, e := range []string{
+		"a" + zwsp + "b", lrm + "+", bom, zwj + "👀", "👀" + zwj, "👀" + zwj + zwj + "👀",
+		"👀" + tag('A') + tag('B'), tag('A') + tag(0x7f), "🏴" + tag('A') + "👀" + tag(0x7f),
+	} {
+		if got := ShowEmoji(e); got != "…" {
+			t.Errorf("ShowEmoji(%q) = %q, want …", e, got)
+		}
+	}
+}
+
+func TestShowEmoji(t *testing.T) {
+	for e, want := range map[string]string{
+		"👀": "👀", "+": "+", "": "", ":thumbsup:": ":thumbsup:",
+		"👩🏽\u200d❤️\u200d💋\u200d👨🏻":                                     "👩🏽\u200d❤️\u200d💋\u200d👨🏻", // 10 runes
+		"🏴\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F": "🏴\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F",
+		"12345678901": "…", "👀\n": "…", "\x1b": "…", "\u2028": "…", "a\tb": "…",
+	} {
+		if got := ShowEmoji(e); got != want {
+			t.Errorf("ShowEmoji(%q) = %q, want %q", e, got, want)
 		}
 	}
 }

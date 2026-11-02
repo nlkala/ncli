@@ -60,6 +60,13 @@
 "event verify": {modes: [json, text, errors], tests: [TestEventVerifyAndGet]}
 "event wrap": {modes: [json, errors], tests: [TestEventWrapUnwrapFrom]}
 "find": {modes: [json, tty, errors], tests: [TestQuery, TestAddressableLookups, TestTTY_Spinner, TestTimeoutCoversHandshake, TestRelayLogin_AuthRequired, TestRelayLogin_MembershipRequired, TestRelayLogin_NIP46Bunker, TestFindFollow, TestFindFollow_Errors, TestPersonForms]}
+"form": {modes: [errors], tests: [TestForms_Errors]}
+"form create": {modes: [json, errors], tests: [TestForms_Private, TestForms_GroupAndPublic, TestForms_Errors]}
+"form list": {modes: [json, text, errors], tests: [TestForms_Private, TestForms_GroupAndPublic, TestForms_Errors]}
+"form respond": {modes: [json, text, errors], tests: [TestForms_Private, TestForms_GroupAndPublic, TestForms_Errors]}
+"form result": {modes: [json, errors], tests: [TestForms_Private, TestForms_GroupAndPublic, TestForms_Errors]}
+"form show": {modes: [json, text], tests: [TestForms_Private, TestForms_GroupAndPublic]}
+"form withdraw": {modes: [json], tests: [TestForms_GroupAndPublic]}
 "groups": {modes: [errors], tests: [TestBareGroupCommands]}
 "groups create": {modes: [json, errors], tests: [TestGroupsCLI]}
 "groups delete": {modes: [json, errors], tests: [TestGroupsModeration]}

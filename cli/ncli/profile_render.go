@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/ohstr/ncli/cli/social"
 )
 
 // The profile card reuses relay status' palette (cli/relay/admin.go) so the
@@ -39,9 +41,10 @@ func renderProfile(v *profileView) {
 	if name == "" {
 		name = shortNpub(v.Npub)
 	}
-	fmt.Printf("  %s\n", profileNameStyle.Render(name))
+	// A profile is its author's text: every field prints escaped.
+	fmt.Printf("  %s\n", profileNameStyle.Render(social.Inline(name)))
 	if about := strings.TrimSpace(firstLine(aboutOf(v))); about != "" {
-		fmt.Printf("  %s\n", about)
+		fmt.Printf("  %s\n", social.Inline(about))
 	} else if v.Metadata == nil {
 		fmt.Printf("  %s\n", profileDimStyle.Render("(no profile metadata published)"))
 	}
@@ -51,8 +54,8 @@ func renderProfile(v *profileView) {
 	fmt.Printf("    %-12s %s\n", "nip-05", renderNip05(v.Nip05))
 	fmt.Printf("    %-12s %s\n", "npub", v.Npub)
 	fmt.Printf("    %-12s %s\n", "pubkey", v.PubKeyHex)
-	fmt.Printf("    %-12s %s\n", "lightning", orNotSet(lightningOf(v), "⚡ "))
-	fmt.Printf("    %-12s %s\n", "website", orNotSet(websiteOf(v), ""))
+	fmt.Printf("    %-12s %s\n", "lightning", orNotSet(social.Inline(lightningOf(v)), "⚡ "))
+	fmt.Printf("    %-12s %s\n", "website", orNotSet(social.Inline(websiteOf(v)), ""))
 	fmt.Println()
 
 	fmt.Printf("  %s      %s\n", profileSectionStyle.Render("Following"), renderFollowing(v))
@@ -79,7 +82,7 @@ func renderRelaySection(v *profileView) {
 	}
 	fmt.Printf("  %s\n", profileSectionStyle.Render(fmt.Sprintf("Relays (%d)", len(v.Relays))))
 	for _, r := range v.Relays {
-		fmt.Printf("    %s  %s\n", relayMarker(r.Read, r.Write), r.URL)
+		fmt.Printf("    %s  %s\n", relayMarker(r.Read, r.Write), social.Inline(r.URL))
 	}
 }
 
@@ -91,7 +94,7 @@ func renderBlossomSection(v *profileView) {
 	}
 	fmt.Printf("  %s\n", profileSectionStyle.Render(fmt.Sprintf("Blossom (%d)", len(v.Blossom))))
 	for _, s := range v.Blossom {
-		fmt.Printf("    •  %s\n", s)
+		fmt.Printf("    •  %s\n", social.Inline(s))
 	}
 }
 
@@ -114,15 +117,16 @@ func renderNip05(s *nip05Status) string {
 	if s == nil || s.Address == "" {
 		return notSet
 	}
+	addr := social.Inline(s.Address)
 	switch {
 	case s.Unchecked:
-		return s.Address + profileDimStyle.Render(" (not checked)")
+		return addr + profileDimStyle.Render(" (not checked)")
 	case s.Error != "":
-		return profileWarnStyle.Render("⚠ ") + s.Address + profileDimStyle.Render(" (could not verify)")
+		return profileWarnStyle.Render("⚠ ") + addr + profileDimStyle.Render(" (could not verify)")
 	case s.Verified:
-		return profileOkStyle.Render("✔ ") + s.Address
+		return profileOkStyle.Render("✔ ") + addr
 	default:
-		return profileErrStyle.Render("✘ ") + s.Address + profileDimStyle.Render(" (does not match this pubkey)")
+		return profileErrStyle.Render("✘ ") + addr + profileDimStyle.Render(" (does not match this pubkey)")
 	}
 }
 
