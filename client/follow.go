@@ -21,8 +21,14 @@ import (
 // feed.
 var ErrFollowLocal = errors.New("--follow needs relay targets, not a local .db file")
 
-// maxSeen bounds the ids a FollowState remembers.
-const maxSeen = 5000
+// maxSeen bounds the delivered ids a FollowState remembers, and
+// maxSeenOnly the ids of events it only saw (gift wraps that didn't open).
+// They are two lists, so junk never pushes a delivered id out (a restart
+// would print that message again).
+const (
+	maxSeen     = 5000
+	maxSeenOnly = 5000
+)
 
 // ErrSkip, returned by FollowOptions.Emit, leaves an event unrecorded in the
 // state: it is neither printed nor remembered, so a later run looks again.
@@ -46,21 +52,27 @@ type FollowState struct {
 	path string
 	mu   sync.Mutex
 
-	seen  map[string]bool
-	order []string
-	since map[string]int64
-	dirty bool
+	seen      map[string]bool // delivered
+	order     []string
+	only      map[string]bool // seen only, never delivered
+	onlyOrder []string
+	since     map[string]int64
+	dirty     bool
 }
 
+// followStateFile is the state on disk. A file from an older ncli has no
+// seen_only: its seen holds both kinds, all kept as delivered.
 type followStateFile struct {
-	Seen  []string         `json:"seen"`
-	Since map[string]int64 `json:"since"`
+	Seen     []string         `json:"seen"`
+	SeenOnly []string         `json:"seen_only,omitempty"`
+	Since    map[string]int64 `json:"since"`
 }
 
 // LoadFollowState reads path; a missing file is an empty state. path ""
 // keeps the state in memory only.
 func LoadFollowState(path string) (*FollowState, error) {
-	s := &FollowState{path: path, seen: map[string]bool{}, since: map[string]int64{}}
+	s := &FollowState{path: path, seen: map[string]bool{}, only: map[string]bool{},
+		since: map[string]int64{}}
 	if path == "" {
 		return s, nil
 	}
@@ -77,6 +89,9 @@ func LoadFollowState(path string) (*FollowState, error) {
 	}
 	for _, id := range f.Seen {
 		s.add(id)
+	}
+	for _, id := range f.SeenOnly {
+		s.addOnly(id)
 	}
 	// A since in the future (an older ncli recorded a junk event's
 	// created_at) would blind every later subscription: forget it, so the
@@ -105,11 +120,25 @@ func (s *FollowState) add(id string) {
 	}
 }
 
-// Seen reports whether id was delivered.
+func (s *FollowState) addOnly(id string) {
+	if s.seen[id] || s.only[id] {
+		return
+	}
+	s.only[id] = true
+	s.onlyOrder = append(s.onlyOrder, id)
+	if len(s.onlyOrder) > maxSeenOnly {
+		delete(s.only, s.onlyOrder[0])
+		s.onlyOrder = s.onlyOrder[1:]
+	}
+}
+
+func (s *FollowState) known(id string) bool { return s.seen[id] || s.only[id] }
+
+// Seen reports whether id was delivered or seen only.
 func (s *FollowState) Seen(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.seen[id]
+	return s.known(id)
 }
 
 // Mark records id as delivered from relay. It reports false if id was
@@ -118,7 +147,7 @@ func (s *FollowState) Seen(id string) bool {
 func (s *FollowState) Mark(id, relay string, createdAt int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.seen[id] {
+	if s.known(id) {
 		return false
 	}
 	s.add(id)
@@ -133,15 +162,16 @@ func (s *FollowState) Mark(id, relay string, createdAt int64) bool {
 }
 
 // MarkSeen records id as delivered without moving any since: for an event
-// whose time can't be trusted (a gift wrap that didn't open). It reports
-// false if id was already delivered.
+// whose time can't be trusted (a gift wrap that didn't open). It goes to
+// its own bounded list, so no amount of junk pushes a delivered id out. It
+// reports false if id was already known.
 func (s *FollowState) MarkSeen(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.seen[id] {
+	if s.known(id) {
 		return false
 	}
-	s.add(id)
+	s.addOnly(id)
 	s.dirty = true
 	return true
 }
@@ -160,7 +190,8 @@ func (s *FollowState) Save() error {
 		s.mu.Unlock()
 		return nil
 	}
-	f := followStateFile{Seen: append([]string(nil), s.order...), Since: map[string]int64{}}
+	f := followStateFile{Seen: append([]string(nil), s.order...),
+		SeenOnly: append([]string(nil), s.onlyOrder...), Since: map[string]int64{}}
 	for k, v := range s.since {
 		f.Since[k] = v
 	}

@@ -55,8 +55,8 @@ func TestFollowJunkAheadNeverBlinds(t *testing.T) {
 	if s := state.Since(r.url); s > time.Now().Unix() || s < now {
 		t.Fatalf("since %d, want within [%d, now]", s, now)
 	}
-	if state.Seen("") || len(state.order) != 3 {
-		t.Fatalf("the junk's id must be remembered: %v", state.order)
+	if state.Seen("") || len(state.order) != 2 || len(state.onlyOrder) != 1 {
+		t.Fatalf("the junk's id must be remembered apart: %v %v", state.order, state.onlyOrder)
 	}
 
 	r.drop()
