@@ -6,6 +6,10 @@
 
 - Adds `dm react` and `dm unreact`: NIP-25 reactions and their NIP-09 retractions inside NIP-17 gift wraps, to the conversation's participants and a copy to yourself. `dm read` shows them as `reaction` / `delete` entries, and `--fold` applies the deletions (each only to its own author's events) and folds reactions into the messages they react to.
 
+### Fixed
+
+- Fixes text output printing fields a relay or another author controls (message content and subject, reactions, group, space and profile fields, relays' OK messages, blossom errors) raw: control, separator and format characters (bidi, zero-width, tags) and invalid UTF-8 now print as Go escapes, and multi-line content stays indented, so remote text can't forge a line, move the cursor or reorder what the terminal shows. `--json` is unchanged.
+
 ## [0.8.0-rc.46]
 
 ### Fixed
