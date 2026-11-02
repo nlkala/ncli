@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/common/meilisearch"
@@ -178,11 +179,64 @@ type MembershipConfig struct {
 	// consumed via a Join Request. 0 means unlimited.
 	InviteMaxUses int `mapstructure:"inviteMaxUses"`
 
+	// InviteAllowNoExpiry, if true, lets createclaimwithlimits mint a code
+	// that never expires (expires_at:0). Off by default -- a never-expiring
+	// invite is a standing liability, so it is opt-in.
+	InviteAllowNoExpiry bool `mapstructure:"inviteAllowNoExpiry"`
+
+	// InviteMaxTTL is the ceiling createclaimwithlimits enforces on an
+	// explicit absolute expiry, as a Go duration string (e.g. "720h").
+	// Empty falls back to the built-in default (30 days). An out-of-range
+	// expiry is refused, never clamped. Validated at startup (parses, > 0).
+	InviteMaxTTL string `mapstructure:"inviteMaxTTL"`
+
+	// MemberClaims, if true (the default), lets a plain member -- not only an
+	// admin -- mint an invite via the NIP-86 createclaim method. The
+	// integration pass (section B) wires this to the nip86 Authorize/Visible
+	// gate; it has no effect until that wiring lands. A nil pointer means
+	// unset, which defaults to true.
+	MemberClaims *bool `mapstructure:"memberClaims"`
+
 	// PublishAddRemoveEvents, if true, makes the relay also publish a
 	// signed kind:8000/8001 event whenever membership changes via
 	// Join/Leave Request, in addition to updating its own internal
 	// membership store (which is authoritative either way).
 	PublishAddRemoveEvents bool `mapstructure:"publishAddRemoveEvents"`
+}
+
+// checkAndDefaultMembership validates the membership block's standalone
+// invariants and fills in its defaults (memberClaims -> true when unset).
+// Split out of initConfig so a test can exercise the real guards without
+// standing up the rest of config loading.
+func (c *RelayConfig) checkAndDefaultMembership() error {
+	if c.Membership == nil {
+		return nil
+	}
+	if c.Membership.Enabled && c.Nip11.PrivKey == "" {
+		return &common.CLIError{Err: errors.New("membership.enabled requires nip11.privkey"), Code: common.CodeUsage}
+	}
+	if c.Membership.InviteMaxUses < 0 {
+		return &common.CLIError{Err: errors.New("membership.inviteMaxUses must be >= 0"), Code: common.CodeUsage}
+	}
+	if c.Membership.InviteMaxTTL != "" {
+		d, err := time.ParseDuration(c.Membership.InviteMaxTTL)
+		if err != nil {
+			return &common.CLIError{Err: fmt.Errorf("membership.inviteMaxTTL is not a valid duration: %w", err), Code: common.CodeUsage}
+		}
+		if d <= 0 {
+			return &common.CLIError{Err: errors.New("membership.inviteMaxTTL must be > 0"), Code: common.CodeUsage}
+		}
+		if d > 10*365*24*time.Hour { // ~10y ceiling: keep now.Add(maxTTL) clear of overflow
+			return &common.CLIError{Err: errors.New("membership.inviteMaxTTL must be <= 10 years"), Code: common.CodeUsage}
+		}
+	}
+	// Default memberClaims to true when unset, so the resolved config is
+	// concrete for the integration pass (section B) that will read it.
+	if c.Membership.MemberClaims == nil {
+		enabled := true
+		c.Membership.MemberClaims = &enabled
+	}
+	return nil
 }
 
 // Nip86Config configures NIP-86, the Relay Management API: membership
@@ -476,13 +530,8 @@ func initConfig() error {
 		}
 	}
 
-	if config.Membership != nil {
-		if config.Membership.Enabled && config.Nip11.PrivKey == "" {
-			return &common.CLIError{Err: errors.New("membership.enabled requires nip11.privkey"), Code: common.CodeUsage}
-		}
-		if config.Membership.InviteMaxUses < 0 {
-			return &common.CLIError{Err: errors.New("membership.inviteMaxUses must be >= 0"), Code: common.CodeUsage}
-		}
+	if err := config.checkAndDefaultMembership(); err != nil {
+		return err
 	}
 	if config.Nip11.Limitation.MembershipRequired {
 		if config.Membership == nil || !config.Membership.Enabled {

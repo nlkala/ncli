@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip11"
@@ -273,6 +275,57 @@ func TestHandleInviteCreate(t *testing.T) {
 		require.NotEmpty(t, got.Code)
 		require.Equal(t, 2, got.MaxUses)
 		require.Equal(t, []string{"r1"}, got.Roles)
+	})
+
+	// The end-to-end gap: `invites create --expires-at/--no-expiry` sends an
+	// absolute expires_at, which the route must honor (via the same shared
+	// validator createclaimwithlimits uses), not just ttl. The code is still
+	// relay-generated here, unlike createclaimwithlimits.
+	t.Run("absolute expires_at is honored", func(t *testing.T) {
+		wsHandler, store := newTestWSHandler(t)
+		future := time.Now().Add(48 * time.Hour).Unix()
+		r := httptest.NewRequest("POST", "/admin/membership/invites", strings.NewReader(
+			`{"expires_at":`+strconv.FormatInt(future, 10)+`,"max_uses":3}`))
+		w := httptest.NewRecorder()
+		handleInviteCreate(testAdmin(wsHandler, store))(w, r)
+		require.Equal(t, http.StatusOK, w.Code)
+		got := decodeJSON[relay.InviteClaim](t, w)
+		require.NotEmpty(t, got.Code, "the relay still generates the code")
+		require.Equal(t, future, got.ExpiresAt, "the absolute expiry is stored verbatim, not re-derived from a ttl")
+		require.Equal(t, 3, got.MaxUses)
+	})
+
+	t.Run("expires_at:0 rejected when inviteAllowNoExpiry is false", func(t *testing.T) {
+		wsHandler, store := newTestWSHandler(t)
+		r := httptest.NewRequest("POST", "/admin/membership/invites", strings.NewReader(`{"expires_at":0}`))
+		w := httptest.NewRecorder()
+		handleInviteCreate(testAdmin(wsHandler, store))(w, r)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("past expires_at rejected", func(t *testing.T) {
+		wsHandler, store := newTestWSHandler(t)
+		past := time.Now().Add(-time.Hour).Unix()
+		r := httptest.NewRequest("POST", "/admin/membership/invites", strings.NewReader(
+			`{"expires_at":`+strconv.FormatInt(past, 10)+`}`))
+		w := httptest.NewRecorder()
+		handleInviteCreate(testAdmin(wsHandler, store))(w, r)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("expires_at:0 allowed when inviteAllowNoExpiry is set", func(t *testing.T) {
+		prev := config
+		t.Cleanup(func() { config = prev })
+		config.Membership = &MembershipConfig{Enabled: true, InviteAllowNoExpiry: true}
+
+		wsHandler, store := newTestWSHandler(t)
+		r := httptest.NewRequest("POST", "/admin/membership/invites", strings.NewReader(`{"expires_at":0}`))
+		w := httptest.NewRecorder()
+		handleInviteCreate(testAdmin(wsHandler, store))(w, r)
+		require.Equal(t, http.StatusOK, w.Code)
+		got := decodeJSON[relay.InviteClaim](t, w)
+		require.NotEmpty(t, got.Code)
+		require.EqualValues(t, 0, got.ExpiresAt, "0 persists as never-expires")
 	})
 }
 
