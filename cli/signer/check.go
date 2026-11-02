@@ -33,11 +33,14 @@ committed fixtures stay valid.
 
 For encrypt/decrypt rules pass --method and --counterpart instead of
 --events. An unwrap_from rule decides on the decrypted seal's author, so
---seal-from is required for it.`,
+--seal-from is required for it. For a NIP-OA attestation pass --method
+nipoa_attest with --subordinate and --conditions (checked as of --now).`,
 		Example: `  ncli signer check --policy policy.yaml -e event.json --pubkey npub1...
   ncli signer check --policy policy.yaml -e state.json --attestations approval.json \
     --now 2026-10-08T12:00:00Z --start-time 2026-10-08T11:00:00Z
-  ncli signer check --policy policy.yaml --method nip44_decrypt --counterpart npub1... --pubkey npub1...`,
+  ncli signer check --policy policy.yaml --method nip44_decrypt --counterpart npub1... --pubkey npub1...
+  ncli signer check --policy policy.yaml --method nipoa_attest --subordinate npub1... \
+    --conditions 'created_at<1767225600' --pubkey npub1...`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := common.NoArgs(cmd, args); err != nil {
 				return err
@@ -56,6 +59,8 @@ For encrypt/decrypt rules pass --method and --counterpart instead of
 	f.String("method", nip46.MethodSignEvent, "Method to evaluate")
 	f.String("counterpart", "", "Peer pubkey for an encrypt/decrypt method")
 	f.String("seal-from", "", "For an unwrap_from rule: the author of the seal the decrypt would return")
+	f.String("subordinate", "", "For nipoa_attest: the key to attest (npub or hex)")
+	f.String("conditions", "", "For nipoa_attest: the attestation's conditions (e.g. created_at<1767225600)")
 	f.String("pubkey", "", "Signer pubkey (npub or hex); defaults to the events' own pubkey")
 	f.String("now", "", "Evaluate as of this time (RFC3339 or unix seconds; default: now)")
 	f.String("start-time", "", "Signer start time (RFC3339 or unix seconds); attestations created before it are rejected")
@@ -71,6 +76,8 @@ type CheckResult struct {
 	EventID      string   `json:"event_id,omitempty"`
 	Kind         *int     `json:"kind,omitempty"`
 	Counterpart  string   `json:"counterpart,omitempty"`
+	Subordinate  string   `json:"subordinate,omitempty"`
+	Conditions   string   `json:"conditions,omitempty"`
 	Decision     string   `json:"decision"`
 	Rule         string   `json:"rule,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
@@ -85,6 +92,9 @@ func runCheck(cmd *cobra.Command, _ []string) error {
 	attPath, _ := f.GetString("attestations")
 	method, _ := f.GetString("method")
 	counterpartFlag, _ := f.GetString("counterpart")
+	subordinateFlag, _ := f.GetString("subordinate")
+	conditionsFlag, _ := f.GetString("conditions")
+	conditionsSet := f.Changed("conditions")
 	pubkeyFlag, _ := f.GetString("pubkey")
 	nowFlag, _ := f.GetString("now")
 	startFlag, _ := f.GetString("start-time")
@@ -108,9 +118,17 @@ func runCheck(cmd *cobra.Command, _ []string) error {
 	}
 
 	signing := method == nip46.MethodSignEvent
+	attesting := method == signer.MethodAttest
 	switch {
 	case signing && eventsPath == "":
 		return common.InvocationError(cmd, errors.New("--events is required for sign_event"))
+	case attesting && (subordinateFlag == "" || !conditionsSet):
+		return common.InvocationError(cmd, errors.New("--subordinate and --conditions are required for nipoa_attest"))
+	case attesting && (counterpartFlag != "" || eventsPath != "" || attPath != ""):
+		return common.InvocationError(cmd, errors.New("nipoa_attest takes --subordinate and --conditions, not --counterpart, --events or --attestations"))
+	case !attesting && (subordinateFlag != "" || conditionsSet):
+		return common.InvocationError(cmd, errors.New("--subordinate/--conditions only apply to nipoa_attest"))
+	case attesting:
 	case !signing && counterpartFlag == "":
 		return common.InvocationError(cmd, fmt.Errorf("--counterpart is required for %s", method))
 	case !signing && (eventsPath != "" || attPath != ""):
@@ -175,6 +193,13 @@ func runCheck(cmd *cobra.Command, _ []string) error {
 			}
 			results = append(results, fill(res, d))
 		}
+	} else if attesting {
+		sub, err := keyresolve.PubkeyArg(cmd, subordinateFlag)
+		if err != nil {
+			return err
+		}
+		d := signer.Evaluate(signer.Request{Method: method, Subordinate: sub, Conditions: conditionsFlag, Now: now, StartTime: start, SignerPub: pub}, policy, used)
+		results = append(results, fill(CheckResult{Method: method, Subordinate: sub, Conditions: conditionsFlag}, d))
 	} else {
 		counterpart, err := keyresolve.PubkeyArg(cmd, counterpartFlag)
 		if err != nil {

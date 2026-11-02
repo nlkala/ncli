@@ -81,6 +81,9 @@ be made to sign an event id.
   its rule takes no `deny_matching` or `require`; a `rate` applies.
 - Each attestation is logged with `subordinate` and `conditions` (never the
   signature).
+- Offline: `ncli signer check --method nipoa_attest --subordinate <key>
+  --conditions <conditions> --pubkey <signer>` decides as the signer would,
+  as of `--now`.
 
 ## Scope authentication kinds
 
