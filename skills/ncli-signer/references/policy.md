@@ -51,7 +51,7 @@ index (`pattern #2`), not its text.
 
 ## NIP-OA attestations
 
-`nipoa_attest` (ncli's own method, used by `ncli attest --signer`) signs a
+`nipoa_attest` (ncli's own method, used by `ncli id attest --signer`) signs a
 NIP-OA owner attestation: the tag `["auth", <signer>, <conditions>, <sig>]`
 for a subordinate key. The signer takes the subordinate key (64 lowercase
 hex) and the conditions, checks the conditions' grammar, and signs
