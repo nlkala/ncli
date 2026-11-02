@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,69 +24,34 @@ func createFlowAttr() FlowAttr {
 	}
 }
 
+// An event read before the next one is logged is a row of its own. The read
+// follows each log here, never a 100 ms sleep racing a spinning reader: on a
+// loaded machine (-race, other suites at once) two events fell between reads,
+// became one row of two, and the old test waited forever for its tenth row.
 func TestLoggerSequences(t *testing.T) {
-
-	wg := sync.WaitGroup{}
-	limit := 10
-	wg.Add(limit)
 	logger := &FlowLogger{}
-	var counter int
-
-	go func() {
-		c := limit
-		for c > 0 {
-			time.Sleep(time.Millisecond * 100)
-			logger.LogEvent(uuid.NewString(), createFlowAttr())
-			c--
+	for i := range 10 {
+		id := uuid.NewString()
+		logger.LogEvent(id, createFlowAttr())
+		rows := logger.GetLastLogs()
+		if len(rows) != 1 || !strings.Contains(strings.Join(rows[0], " "), "EVENT "+id) {
+			t.Fatalf("event %d: rows %q, want one row naming %s", i, rows, id)
 		}
-	}()
-
-	go func() {
-		for {
-			for range logger.GetLastLogs() {
-				// fmt.Printf("%v\n\n", row)
-				counter++
-				wg.Done()
-			}
-		}
-	}()
-
-	wg.Wait()
-	if counter != limit {
-		t.Fatalf("unexpected counter, want=%d got=%d", limit, counter)
+	}
+	if rows := logger.GetLastLogs(); len(rows) != 0 {
+		t.Fatalf("nothing new logged, rows %q", rows)
 	}
 }
 
+// Events logged between two reads are one row that counts them.
 func TestLoggerAggregated(t *testing.T) {
-
-	wg := sync.WaitGroup{}
-	limit := 10
-	wg.Add(1)
 	logger := &FlowLogger{}
-	var counter int
-
-	go func() {
-		for limit > 0 {
-			time.Sleep(time.Millisecond * 100)
-			logger.LogEvent(uuid.NewString(), createFlowAttr())
-			limit--
-		}
-	}()
-
-	go func() {
-		for range time.Tick(time.Second * 2) {
-			for _, row := range logger.GetLastLogs() {
-				fmt.Printf("%v\n\n", row)
-				counter += 1
-				wg.Done()
-			}
-		}
-	}()
-
-	wg.Wait()
-
-	if counter != 1 {
-		t.Fatalf("unexpected counter, want=%d got=%d", 1, counter)
+	for range 10 {
+		logger.LogEvent(uuid.NewString(), createFlowAttr())
+	}
+	rows := logger.GetLastLogs()
+	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0], " "), "EVENTS ") || !strings.HasSuffix(rows[0][len(rows[0])-1], "10") {
+		t.Fatalf("rows %q, want one row of 10 events", rows)
 	}
 }
 
