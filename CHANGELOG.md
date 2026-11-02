@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixes ncli's own NIP-98 headers (relay admin, huddle) tagging their anti-replay value `nonce`, which NIP-13 reads as a proof-of-work claim, so a socket signer's client refused them. They tag `salt`, as nmilat's `nip98.Sign` does; verifiers never read it, so old and new headers interoperate.
+
 ## [0.8.0-rc.46]
 
 ### Fixed
