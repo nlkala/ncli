@@ -79,14 +79,21 @@ func sendAndAwaitDecision(t *testing.T, daemon *Daemon, req *nip46.RequestEvent,
 	done := make(chan *nip01.Event, 1)
 	go func() { done <- daemon.handler.Handle(req, nip46.EncryptionNIP04) }()
 
-	select {
-	case ev := <-done:
-		return parseResponse(t, ev), false
-	case <-time.After(150 * time.Millisecond):
-		// Didn't resolve immediately -- must be waiting in the queue for a
-		// human decision.
+	// Wait for whichever comes first: the response (a grant decided it) or
+	// the request in the queue (a human decision is needed) -- never a
+	// guess from a stretch of silence, which a slow machine outlasts.
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for len(daemon.cfg.Queue.List()) == 0 {
+		select {
+		case ev := <-done:
+			return parseResponse(t, ev), false
+		case <-deadline:
+			t.Fatal("the request neither resolved nor reached the queue in 10s")
+		case <-tick.C:
+		}
 	}
-
 	waitFor(t, func() bool { return len(daemon.cfg.Queue.List()) == 1 })
 	pending := daemon.cfg.Queue.List()[0]
 	decide(pending.ID)
