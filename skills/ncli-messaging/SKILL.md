@@ -1,6 +1,6 @@
 ---
 name: ncli-messaging
-description: Talk on Nostr through a signer that holds the key -- private messages (ncli dm send/read/prove/verify, NIP-17), group chat (ncli groups send/read/feed, NIP-29), reactions, replies, posts, reposts and deletions (ncli event react/reply/post/repost/delete), your own profile, follows, mutes and relay lists (ncli profile set/relays set/follow/mute), and waiting for new events (ncli find -f). Use when an agent or script must message people, answer them, or prove what someone wrote, without holding a private key.
+description: Talk on Nostr through a signer that holds the key -- private messages (ncli dm send/read/react/unreact/prove/verify, NIP-17), group chat (ncli groups send/read/feed, NIP-29), reactions, replies, posts, reposts and deletions (ncli event react/reply/post/repost/delete), your own profile, follows, mutes and relay lists (ncli profile set/relays set/follow/mute), and waiting for new events (ncli find -f). Use when an agent or script must message people, answer them, or prove what someone wrote, without holding a private key.
 license: Unlicense
 ---
 
@@ -55,7 +55,7 @@ What each command asks the signer for:
 
 | Command | Signer requests |
 |---|---|
-| `dm send` | `nip44_encrypt` to `--to` and to yourself, two kind 13 seals |
+| `dm send`, `dm react`, `dm unreact` | `nip44_encrypt` to `--to` and to yourself, two kind 13 seals (`unreact --target`: also `dm read`'s, for your own seals) |
 | `dm read` | `nip44_decrypt` per wrap (one-time key: `unwrap_from`), then per seal (`--from`) |
 | `dm prove` | the above for one wrap, then `nip44_message_keys` for `--from` |
 | `event react/reply/post/repost/delete` | `sign_event` kind 7 / 1, 9 or 1111 / 1 / 6 or 16 / 5 |
@@ -106,6 +106,35 @@ Gotchas:
 - With `--json`, a one-shot read prints one array (`[]` when empty); `-f`
   prints NDJSON.
 
+### React to a message
+
+A reaction is a NIP-25 kind 7 rumor, sealed and wrapped like a message (to
+`--to`, and a copy to yourself); removing it is a NIP-09 kind 5 rumor naming
+it, wrapped the same way.
+
+```sh
+# react to a message by its id ("id" in dm read, not "wrap"); prints the reaction's id
+ncli dm react --to npub1alice... <message-id> 👀 --kind 14 -s wss://inbox.example --json
+
+# remove it by id, or look it up in your own copies by target and emoji
+ncli dm unreact --to npub1alice... <reaction-id> -s wss://inbox.example
+ncli dm unreact --to npub1alice... --target <message-id> --emoji 👀 -s wss://inbox.example --json
+
+# each message with the reactions still standing (deletions applied)
+ncli dm read --from npub1alice... --from npub1self... -s wss://inbox.example --fold --json
+```
+
+- The message's author is `--to` unless `--author` says otherwise (your
+  own message: yourself). `--kind` sets the `k` tag; none by default.
+- `dm read` shows a reaction as `"type": "reaction"` with `emoji` and
+  `target`, a deletion as `"type": "delete"` with `targets`; text: `👀 on
+  <id>`, `removed <id>`. A message has no `type`.
+- A deletion counts only for events by its own author: `--fold` ignores
+  anyone else's. `--fold` needs a whole read (not `-f`); your reactions
+  show only when you read your own copies (`--from` yourself).
+- `unreact --target` finds nothing (`not_found`) when the reaction was sent
+  with `--no-self-copy`, or is older than `--since`.
+
 ### Prove one message
 
 `dm prove` shows a third party exactly what one sender wrote, with no key
@@ -135,7 +164,10 @@ Most remote bunkers don't offer `nip44_message_keys`: use
 ```
 
 `channel` is `dm` or `group`. `wrap` is set for a DM, `group` for a group
-message. `mentions` are the `p` tags: a DM's recipients.
+message. `mentions` are the `p` tags: a DM's recipients. A reaction adds
+`"type": "reaction", "emoji", "target"`, a deletion `"type": "delete",
+"targets"`; with `dm read --fold`, a message has `reactions`: `[{"id",
+"from", "emoji", "created_at"}]`.
 
 ## Group chat (NIP-29)
 
