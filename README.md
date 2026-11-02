@@ -1372,7 +1372,8 @@ ncli id delegate --issuer mykey --delegatee otherkey --json
 
 The vault is encrypted under a password. `ncli id sign` signs an unsigned
 event with an identity's private key; `ncli id delegate` mints a NIP-26
-delegation token from one.
+delegation token from one; `ncli id attest <npub> --until <time>` signs a
+NIP-OA owner attestation with an identity or through `--signer`.
 
 ![`ncli id` generating a keypair, then inspecting a nip-05 address](docs/vhs/id.gif)
 

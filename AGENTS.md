@@ -52,6 +52,7 @@ that priority order.
 | `ncli id relabel <identifier> <new-label>` | Rename a saved vault identity (by label, npub, hex, nprofile or nip-05) without supplying its key |
 | `ncli id rm <identifier>` | Remove a saved vault identity (by label, npub, hex, nprofile or nip-05), deleting the vault's copy of its key; confirms first, `--yes` required with `--json` or no terminal |
 | `ncli id delegate` | Mint a NIP-26 delegation token |
+| `ncli id attest <npub\|hex>` | Sign a NIP-OA owner attestation (`--until`, `--kind`) with `--identity` or through `--signer` (a socket signer's `nipoa_attest`, allowed only by an `attest` policy rule); prints the `["auth", attester, conditions, sig]` tag, verified |
 | `ncli id sign -e <events.json> -o <signed.json>` | Sign one or more unsigned events with a vault/nsec identity; `-e -`/`-o -` read stdin and print the signed events, so `ncli event new \| ncli id sign -e - -o - \| ncli publish -e -` works as a pipe |
 | `ncli decode <entity>` | Decode any NIP-19 bech32 entity (npub/nsec/note/nprofile/nevent/naddr), a NIP-CASH cash-token-family string, or a NIP-CW circlehub1... connection |
 | `ncli miner -e <event.yaml>` | Mine or check NIP-13 proof-of-work on an event |
@@ -69,7 +70,7 @@ Every command's actual result goes to **stdout only**; progress narration
 and errors go to **stderr** — so piping stdout into `jq` or a script's
 parser never picks up log noise. `--json` and `-q/--quiet` are global flags
 (declared once on the root command, available on every subcommand) rather
-than per-command. `id`, `id list`, `id import`, `id relabel`, `id rm`, `id sign`, `version`, `skills list`/`show`/`install`, `id delegate`, `relay
+than per-command. `id`, `id list`, `id import`, `id relabel`, `id rm`, `id sign`, `version`, `skills list`/`show`/`install`, `id delegate`, `id attest`, `relay
 status`/`index`/`jobs`/`verify`/`metrics token`, `relay members`/`invites`/`roles`, `ping`,
 `miner mine`/`check`, `publish`, `huddle list`, `space create`/
 `list`/`show`/`chat send`/`chat list`, `bunker`/`status`/`stop`/
