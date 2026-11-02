@@ -8,11 +8,14 @@
 - Adds the `membership.inviteMaxTTL` (default 30 days) and `inviteAllowNoExpiry` (default false) config keys, which cap how far an absolute expiry may be set and gate never-expiring codes. A requested limit outside policy is refused, never silently clamped.
 - Adds NIP-43 member claims: with `membership.memberClaims` (default true), a plain member — not only an admin — may mint an invite via `createclaim`, scoped to just `createclaim` and `supportedmethods`. Set it false to keep the Relay Management API admin-only.
 
+### Fixed
+
+- Fixes the vault password prompt failing with `inappropriate ioctl for device` when the event is piped into a signing command (e.g. `ncli event new … | ncli publish -e - --signer <label>`). The prompt now reads from the controlling terminal, like ssh/sudo, and falls back to a clear "set NCLI_VAULT_PASSWORD" error when no terminal is available instead of the cryptic ioctl one. ([#206](https://github.com/ohstr/ncli/pull/206))
+
 ## [0.8.0-rc.46]
 
 ### Fixed
 
-- Fixes the vault password prompt failing with `inappropriate ioctl for device` when the event is piped into a signing command (e.g. `ncli event new … | ncli publish -e - --signer <label>`). The prompt now reads from the controlling terminal, like ssh/sudo, and falls back to a clear "set NCLI_VAULT_PASSWORD" error when no terminal is available instead of the cryptic ioctl one. ([#206](https://github.com/ohstr/ncli/pull/206))
 - Fixes a NIP-46 consent flaw where approving a bunker `connect` silently granted every permission the app requested, permanently, even for an "Approve Once". The approval now shows the requested scope, "Approve Once" remembers nothing, and sensitive kinds (0/3/5 -- identity, contacts, deletion) always require per-request consent. ([#204](https://github.com/ohstr/ncli/pull/204))
 
 ## [0.8.0-rc.45]
