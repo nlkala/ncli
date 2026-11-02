@@ -1248,6 +1248,9 @@ talk on Nostr while its key stays in `ncli signer serve`.
 ncli dm send --to npub1alice... "on my way" -s wss://inbox.example --signer bunker+unix:///run/signer/agent.sock
 # only alice's messages are opened; -f streams new ones
 ncli dm read --from npub1alice... -s wss://inbox.example -f --state dm.state
+# react privately (NIP-25 in a gift wrap), and take it back (NIP-09)
+ncli dm react --to npub1alice... <message-id> 👀 -s wss://inbox.example
+ncli dm unreact --to npub1alice... --target <message-id> --emoji 👀 -s wss://inbox.example
 # show one message to anyone, who checks it without a key
 ncli dm prove <wrap-id> --from npub1alice... -s wss://inbox.example -o proof.json
 ncli dm verify proof.json --from npub1alice...
@@ -1264,6 +1267,30 @@ open gift wraps only from listed senders, and `nip44_message_keys` (for
 `dm prove`) must be named. See
 [`skills/ncli-messaging/SKILL.md`](skills/ncli-messaging/SKILL.md) and
 [`examples/signer/messaging-policy.yaml`](examples/signer/messaging-policy.yaml).
+
+## `form`, questions answered in one response (NIP-PF)
+
+Forms ask one or more questions — single or multiple choice, text, number,
+date, time — with the option their author recommends and why, notes
+required on some options, defaults, a quorum and an end. Each responder
+answers every question in one response (the latest counts), and the author
+closes the form with a result: decided, default or cancelled. A form is
+private (one rumor gift-wrapped to each responder and to you, sent to `-s`
+only; `--inbox` adds each recipient's DM relays, kind 10050), in a NIP-29
+group, or public; everything is signed through `--signer`.
+
+```sh
+ncli form create --spec ask.json --to npub1bob... -s wss://inbox.example --signer bunker+unix:///run/signer/agent.sock
+ncli form list --open -s wss://inbox.example
+ncli form show 3f2a9c -s wss://inbox.example
+ncli form respond 3f2a9c --choose revert --note revert="after lunch" -s wss://inbox.example
+ncli form respond 3f2a9c -s wss://inbox.example     # question by question on the terminal
+ncli form result 3f2a9c --status decided --choose revert --content "reverted" -s wss://inbox.example
+```
+
+A response the form refuses is refused before anything is sent. The rules
+are nmilat's `nippf` (ohstr's NIP-PF draft). See
+[`skills/ncli-forms/SKILL.md`](skills/ncli-forms/SKILL.md).
 
 ## `blossom`
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/keyresolve"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nipB7"
@@ -226,7 +227,7 @@ func printFanoutReport(jsonMode bool, report *fanoutReport) {
 			// rm has no URL to show -- only upload/mirror populate one.
 			fmt.Printf("ok   %s -> %s\n", r.Item, r.Server)
 		default:
-			fmt.Printf("fail %s -> %s: %s\n", r.Item, r.Server, r.Error)
+			fmt.Printf("fail %s -> %s: %s\n", r.Item, social.Inline(r.Server), social.Inline(r.Error))
 		}
 	}
 	fmt.Printf("attempted %d, succeeded %d, failed %d\n", report.Attempted, report.Succeeded, report.Failed)

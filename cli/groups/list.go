@@ -12,6 +12,7 @@ import (
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/keyresolve"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip29"
@@ -191,7 +192,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "ID\tNAME\tVISIBILITY\tMEMBERSHIP")
 	for _, g := range groupList {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", g.ID, dashIfEmpty(g.Name), visibilityLabel(g.Private), membershipLabel(g.Closed))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", social.Inline(g.ID), social.Inline(dashIfEmpty(g.Name)), visibilityLabel(g.Private), membershipLabel(g.Closed))
 	}
 	return tw.Flush()
 }
