@@ -77,7 +77,7 @@ func printPublishReport(cmd *cobra.Command, report *client.PublishReport) {
 	// Same stdout-only-holds-the-result convention as "ncli publish".
 	for _, r := range report.Results {
 		if r.Accepted {
-			fmt.Printf("published %s to %s\n", r.ID, r.Relay)
+			fmt.Printf("published %s to %s\n", r.ID, social.Inline(r.Relay))
 		} else {
 			fmt.Printf("failed %s to %s: %s\n", r.ID, social.Inline(r.Relay), social.Inline(r.Error))
 		}

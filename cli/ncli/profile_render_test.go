@@ -105,6 +105,35 @@ func TestBuildProfileView_Stats(t *testing.T) {
 	}
 }
 
+// A NIP-85 stat value is its provider's text: withThousands groups digits
+// in any string without checking it's numeric, and unixDate echoes a value
+// it can't parse -- both must be escaped so a crafted assertion can't carry
+// a control, newline or bidi rune to the terminal.
+func TestStatsLines_EscapesHostileValues(t *testing.T) {
+	s := profileStats{
+		Provider: "aa",
+		Tags: map[string]string{
+			"followers":      "12\x1b[2J34",            // ESC in a "numeric" stat
+			"following":      "5‮6",               // right-to-left override
+			"zap_first_recd": "not-a-ts\nfailed login", // unixDate parse-fail fallback
+		},
+	}
+	got := strings.Join(statsLines(s, 1), "\n")
+	if strings.ContainsAny(got, "\x1b‮") {
+		t.Errorf("stats lines leaked a raw control/bidi rune: %q", got)
+	}
+	// statsLines returns one string per line; a hostile value's own newline
+	// must have been escaped, not split the join into extra entries.
+	if n := len(statsLines(s, 1)); strings.Count(got, "\n") != n-1 {
+		t.Errorf("a hostile value introduced a raw newline: %q", got)
+	}
+	// The digits still render (escaped, grouped), proving the value went
+	// through the fixed path rather than being dropped.
+	if !strings.Contains(got, `\x1b`) {
+		t.Errorf("expected the ESC to survive as a visible escape, got: %q", got)
+	}
+}
+
 // Under --no-verify the address wasn't checked, so it mustn't read as a
 // mismatch.
 func TestRenderNip05_Unchecked(t *testing.T) {

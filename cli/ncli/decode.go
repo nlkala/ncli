@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/spf13/cobra"
 )
@@ -48,13 +49,15 @@ Pairing secrets are never printed.`,
 			fmt.Println("event id:  ", entity.EventID)
 		}
 		if entity.Identifier != "" {
-			fmt.Println("identifier:", entity.Identifier)
+			// Identifier, relay hints and label are attacker-crafted TLV from
+			// the entity the victim is decoding -- escape before printing.
+			fmt.Println("identifier:", social.Inline(entity.Identifier))
 		}
 		if entity.Kind != nil {
 			fmt.Println("kind:      ", *entity.Kind)
 		}
 		if len(entity.Relays) > 0 {
-			fmt.Println("relays:    ", strings.Join(entity.Relays, ", "))
+			fmt.Println("relays:    ", social.Inline(strings.Join(entity.Relays, ", ")))
 		}
 		if entity.IdentityRequired != nil {
 			fmt.Println("identity_required:", *entity.IdentityRequired)
@@ -64,7 +67,7 @@ Pairing secrets are never printed.`,
 			fmt.Println("attested_amount_millis:", *entity.AttestedAmountMillis)
 		}
 		if entity.Label != "" {
-			fmt.Println("label:     ", entity.Label)
+			fmt.Println("label:     ", social.Inline(entity.Label))
 		}
 		return nil
 	},

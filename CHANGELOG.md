@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Fixes text output printing fields a relay or another author controls (message content and subject, reactions, group, space and profile fields, relays' OK messages, blossom errors) raw: control, separator and format characters (bidi, zero-width, tags) and invalid UTF-8 now print as Go escapes, and multi-line content stays indented, so remote text can't forge a line, move the cursor or reorder what the terminal shows. `--json` is unchanged.
+- Fixes text output printing fields a relay or another author controls (message content and subject, reactions, group, space and profile fields, decoded NIP-19/token identifiers, relay hints and labels, identity relays, NIP-85 stat values, every relay publish result, and Blossom server responses and blob listings) raw: control, separator and format characters (bidi, zero-width, tags) and invalid UTF-8 now print as Go escapes, and multi-line content stays indented, so remote text can't forge a line, move the cursor or reorder what the terminal shows. `--json` is unchanged.
 
 ## [0.8.0-rc.46]
 

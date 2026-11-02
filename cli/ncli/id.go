@@ -123,7 +123,7 @@ func runIDInspect(cmd *cobra.Command, arg string) error {
 		fmt.Println("nip-05:    ", social.Inline(result.Nip05), "(resolved)")
 	}
 	if len(result.Relays) > 0 {
-		fmt.Println("relays:    ", strings.Join(result.Relays, ", "))
+		fmt.Println("relays:    ", social.Inline(strings.Join(result.Relays, ", ")))
 	}
 	if result.PrivKeyHex != "" {
 		fmt.Println("hex privkey:", result.PrivKeyHex)
