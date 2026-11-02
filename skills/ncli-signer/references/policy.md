@@ -194,3 +194,14 @@ A `sign_event`'s `created_at` is checked inside the matched rule:
 
 `rate: 60/m` gives a burst of 60 that refills at 60 per minute, with one
 bucket per rule. A rate change on reload resets that rule's bucket.
+
+An `unwrap_from` rule's rate counts only the wraps it releases: who sealed
+a wrap is known only once it is decrypted, so the token is taken then, and
+a refused wrap (not addressed to the signer, not a seal, sealed by a
+sender the rule does not list) takes none. Anyone can address wraps to
+the key; they can't spend the listed senders' rate. A refused wrap is
+remembered (the last 4096, until the policy changes) and refused again at
+once, with no decryption. While the bucket is empty, an unwrap is refused
+before decrypting. A refusal for rate ends in `rate limit exceeded`: the
+caller tries again later (`dm read` waits and retries; any other refusal
+is final).

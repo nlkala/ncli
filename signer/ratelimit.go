@@ -26,7 +26,24 @@ func NewLimiter() *Limiter {
 func (l *Limiter) Allow(rule string, r Rate, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	b := l.refill(rule, r, now)
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
 
+// Ready reports whether rule's bucket holds a token at now, without taking
+// it.
+func (l *Limiter) Ready(rule string, r Rate, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.refill(rule, r, now).tokens >= 1
+}
+
+// refill returns rule's bucket brought up to now. l.mu must be held.
+func (l *Limiter) refill(rule string, r Rate, now time.Time) *bucket {
 	b := l.buckets[rule]
 	if b == nil || b.rate != r {
 		b = &bucket{rate: r, tokens: float64(r.N), last: now}
@@ -39,9 +56,5 @@ func (l *Limiter) Allow(rule string, r Rate, now time.Time) bool {
 		}
 	}
 	b.last = now
-	if b.tokens < 1 {
-		return false
-	}
-	b.tokens--
-	return true
+	return b
 }

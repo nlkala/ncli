@@ -20,6 +20,7 @@
 
 - Fixes ncli's own NIP-98 headers (relay admin, huddle) tagging their anti-replay value `nonce`, which NIP-13 reads as a proof-of-work claim, so a socket signer's client refused them. They tag `salt`, as nmilat's `nip98.Sign` does; verifiers never read it, so old and new headers interoperate.
 - Fixes text output printing fields a relay or another author controls (message content and subject, reactions, group, space and profile fields, relays' OK messages, blossom errors) raw: control, separator and format characters (bidi, zero-width, tags) and invalid UTF-8 now print as Go escapes, and multi-line content stays indented, so remote text can't forge a line, move the cursor or reorder what the terminal shows. `--json` is unchanged.
+- Fixes the signer charging an `unwrap_from` rule's rate before it knew the seal's author, so gift wraps from anyone could use up a listed sender's rate. The rate is charged only for a wrap the rule releases; refused wraps are remembered and refused again without decryption; `dm read` retries a wrap refused for rate instead of skipping it.
 
 ## [0.8.0-rc.47]
 
