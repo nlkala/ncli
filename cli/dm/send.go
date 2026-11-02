@@ -6,6 +6,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/keyresolve"
@@ -33,8 +34,9 @@ func newSendCommand() *cobra.Command {
 publishes it to -s/--relays. A copy is wrapped to yourself too, so you
 can read and prove what you sent; --no-self-copy skips it.
 
---to takes an npub, hex, nprofile, nip-05 or vault label. Prints the
-message's id (the rumor's).
+--to takes an npub, hex, nprofile, nip-05 or vault label. --label adds
+a t tag (a label, which dm read shows beside its author; repeatable).
+Prints the message's id (the rumor's).
 
 The signer is asked to sign two kind 13 seals and to nip44_encrypt to
 --to and to yourself.`,
@@ -51,6 +53,7 @@ The signer is asked to sign two kind 13 seals and to nip44_encrypt to
 	cmd.Flags().String("to", "", "Recipient: npub, hex, nprofile, nip-05 or vault label (required)")
 	cmd.Flags().StringP("reply", "r", "", "Id of the message this answers (hex, note or nevent)")
 	cmd.Flags().String("subject", "", "Conversation subject")
+	cmd.Flags().StringArray("label", nil, "A label: a t tag with this value (repeatable)")
 	cmd.Flags().Bool("no-self-copy", false, "Don't wrap a copy to yourself")
 	social.AddRelaysFlag(cmd, "Comma-separated relays to publish to (required)")
 	social.AddSignerFlag(cmd)
@@ -97,6 +100,10 @@ func runSend(cmd *cobra.Command, args []string) error {
 	defer closeSigner()
 
 	rumor := nip17.NewChatMessage(text, opts...)
+	labels, _ := cmd.Flags().GetStringArray("label")
+	if err := addLabels(rumor, labels); err != nil {
+		return common.InvocationError(cmd, err)
+	}
 	rumor.CreatedAt = uint64(time.Now().Unix())
 	wraps, err := wrapForBoth(cmd, signer, rumor, to)
 	if err != nil {
@@ -147,4 +154,21 @@ func sealTo(cmd *cobra.Command, signer client.Crypto, rumor *nip01.Event, recipi
 		return nil, common.RuntimeError(cmd, err)
 	}
 	return []*nip01.Event{wrap}, nil
+}
+
+// addLabels adds a t tag for each label, once each, in order: a label is
+// one line of printable text (no control or format character, no space at
+// either end).
+func addLabels(rumor *nip01.Event, labels []string) error {
+	seen := map[string]bool{}
+	for _, l := range labels {
+		if l == "" || strings.TrimSpace(l) != l || social.Inline(l) != l || !utf8.ValidString(l) {
+			return fmt.Errorf("--label %q: one line of plain text, no space at either end", l)
+		}
+		if !seen[l] {
+			seen[l] = true
+			rumor.Tags = append(rumor.Tags, []string{"t", l})
+		}
+	}
+	return nil
 }

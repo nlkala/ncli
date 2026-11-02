@@ -41,7 +41,7 @@ func TestFormTextEscaped(t *testing.T) {
 	}
 	rawControl(t, "form list", out.String())
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[1], `\x1b[1A\x1b[2K\r`) || !strings.Contains(lines[1], `\n`+forgedLine) {
+	if len(lines) != 2 || !strings.Contains(lines[1], `\x1b[1A\x1b[2K\r`) || !strings.Contains(lines[1], `\n`+strings.ReplaceAll(forgedLine, "  ", " ")) {
 		t.Fatalf("form list, one line per form, escaped: %q", out.String())
 	}
 
@@ -61,16 +61,16 @@ func TestFormTextEscaped(t *testing.T) {
 			t.Fatalf("form show lacks %q:\n%s", want, show.String())
 		}
 	}
-	// No line the author wrote starts at column 0 but the title.
+	// No line the author wrote starts at column 0, the title neither (it follows "title: ").
 	for _, l := range strings.Split(show.String(), "\n") {
-		if strings.HasPrefix(l, "result: cancelled") || strings.HasPrefix(l, "form x") {
+		if strings.HasPrefix(l, "result: cancelled") || strings.HasPrefix(l, "form x") || strings.HasPrefix(l, `\x1b[1A`) {
 			t.Fatalf("forged line at column 0: %q", l)
 		}
 	}
 
 	// form respond's prompts too.
 	var prompts bytes.Buffer
-	if _, _, err := promptResponse(&prompts, bufio.NewReader(strings.NewReader("1\nfine\n")), forged); err != nil {
+	if _, _, err := promptResponse(&prompts, bufio.NewReader(strings.NewReader("1\nfine\n")), forged, nil); err != nil {
 		t.Fatal(err)
 	}
 	rawControl(t, "form respond", prompts.String())

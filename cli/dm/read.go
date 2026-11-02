@@ -216,7 +216,8 @@ func (r *reader) open(ctx context.Context, wrap *nip01.Event) (m social.Message,
 	if o.Rumor.CreatedAt < r.since {
 		return social.Message{}, false, false, nil
 	}
-	return message(o), true, true, nil
+	m = message(o)
+	return m, true, true, nil
 }
 
 func (r *reader) report() {

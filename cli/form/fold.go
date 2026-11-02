@@ -25,6 +25,11 @@ type View struct {
 	Tally      *nippf.Tally      `json:"tally"`
 	Mine       *nippf.Response   `json:"mine,omitempty"`
 	Waiting    []string          `json:"waiting,omitempty"`
+	// Labels: the form event's t tags, as its author set them. They are the
+	// author's word, like the rest of the form: a label names what the
+	// author says it is, never who
+	// wrote it -- that is Form.Author.
+	Labels []string `json:"labels,omitempty"`
 	// last: the created_at of my latest response or withdrawal (0: none),
 	// so the next one is timed after it and counts (ties go to the lowest id).
 	last int64
@@ -41,6 +46,7 @@ func fold(items []item, me string, now int64) (views []*View, invalid int) {
 		group   string
 	}
 	var forms []*nippf.Form
+	labels := map[string][]string{}
 	var responses []*nippf.Response
 	var results []*nippf.Result
 	respWay := map[*nippf.Response]reply{}
@@ -55,6 +61,7 @@ func fold(items []item, me string, now int64) (views []*View, invalid int) {
 			}
 			if !slices.ContainsFunc(forms, func(g *nippf.Form) bool { return g.ID == f.ID }) {
 				forms = append(forms, f)
+				labels[f.ID] = formLabels(it.ev.Tags)
 			}
 		case nippf.KindResponse:
 			if r, err := nippf.ParseResponse(it.ev); err == nil {
@@ -88,7 +95,7 @@ func fold(items []item, me string, now int64) (views []*View, invalid int) {
 		}
 		closing := f.Closing(res)
 		selected := f.Select(rs, closing)
-		v := &View{Form: f, State: f.State(closing, now), Result: closing, Responses: selected, Tally: f.Tally(selected)}
+		v := &View{Form: f, State: f.State(closing, now), Result: closing, Responses: selected, Tally: f.Tally(selected), Labels: labels[f.ID]}
 		switch {
 		case f.Private:
 			v.Where = "private"
@@ -136,6 +143,10 @@ func fold(items []item, me string, now int64) (views []*View, invalid int) {
 	})
 	return views, invalid
 }
+
+// formLabels: a form event's t tags' values, each once, in order (the
+// event's id covers them: a form's labels are its author's).
+func formLabels(tags [][]string) []string { return social.TagLabels(tags) }
 
 // pick finds the form arg names among views: its id in full (hex, note or
 // nevent), or the start of its hex id (6 characters or more), once.

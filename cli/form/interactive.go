@@ -67,9 +67,12 @@ func typeHint(typ string) string {
 // its options with the recommended one marked and the author's why, a note
 // where one is required (offered elsewhere), optional questions skippable.
 // The answers are checked as a whole by nippf when the response is built.
-func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form) ([]nippf.Choice, []nippf.Answer, error) {
+// The form's labels come first: who answers sees them before any of the
+// author's words.
+func promptResponse(w io.Writer, in *bufio.Reader, f *nippf.Form, labels []string) ([]nippf.Choice, []nippf.Answer, error) {
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	p("%s\n", esc(f.Title))
+	writeLabels(w, labels, f.Author)
+	p("title: %s\n", social.Title(f.Title))
 	if f.Context != "" {
 		p("\n")
 		social.WriteBlock(w, "  ", f.Context)

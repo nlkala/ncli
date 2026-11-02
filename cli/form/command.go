@@ -496,7 +496,7 @@ func runRespond(cmd *cobra.Command, args []string) error {
 	interactive := !given
 	if interactive {
 		in := bufio.NewReader(cmd.InOrStdin())
-		if cs, as, err = promptResponse(cmd.ErrOrStderr(), in, f); err != nil {
+		if cs, as, err = promptResponse(cmd.ErrOrStderr(), in, f, v.Labels); err != nil {
 			return common.InvalidInputError(cmd, "", err)
 		}
 		ev, err := f.NewResponse(s.me, replyTime(v), cs, as)

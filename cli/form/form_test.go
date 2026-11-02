@@ -606,6 +606,66 @@ func TestFoldSameWayOnly(t *testing.T) {
 	}
 }
 
+// A form's t tags are its labels: list and show print them, escaped, beside its author and before
+// any of the author's text.
+func TestFormLabels(t *testing.T) {
+	alice, bob := newActor(t, 1), newActor(t, 2)
+	f := &nippf.Form{Title: "Notice: PR 1", Private: true, Parties: []nippf.Party{{PubKey: bob.pub, Role: nippf.RoleResponder}},
+		Questions: []nippf.Question{{Index: 0, Text: "q", Type: nippf.TypeSingle, Options: []nippf.Option{{ID: "a", Label: "A"}}}}}
+	build := func(tags ...[]string) *nip01.Event {
+		ev, err := f.Event(alice.pub, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev.Tags = append(ev.Tags, tags...)
+		if err := nip59.PrepareRumor(ev, alice.pub); err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	labelled := build([]string{"t", "release-ok"}, []string{"t", "release-ok"}, []string{"t", "x\x1b[2J"})
+	plain := build()
+	views, invalid := fold([]item{{ev: labelled, private: true}, {ev: plain, private: true}}, bob.pub, 200)
+	if invalid != 0 || len(views) != 2 {
+		t.Fatalf("views %d invalid %d", len(views), invalid)
+	}
+	var mv, pv *View
+	for _, v := range views {
+		if v.Form.ID == labelled.ID {
+			mv = v
+		} else {
+			pv = v
+		}
+	}
+	if mv == nil || pv == nil || strings.Join(mv.Labels, ",") != "release-ok,x\x1b[2J" || pv.Labels != nil {
+		t.Fatalf("labels: %+v / %+v", mv, pv)
+	}
+	if l := listLine(mv); !strings.Contains(l, "#release-ok #x\\x1b[2J") || strings.Contains(listLine(pv), "#") {
+		t.Fatalf("form list: %q / %q", l, listLine(pv))
+	}
+	var show bytes.Buffer
+	writeView(&show, mv)
+	rawControl(t, "form show", show.String())
+	// the labels line first, before any of the author's text
+	if lines := strings.Split(show.String(), "\n"); !strings.HasPrefix(lines[0], "labels: #release-ok #x\\x1b[2J (its author's: ") || !strings.HasPrefix(lines[1], "form ") {
+		t.Fatalf("form show: %s", show.String())
+	}
+	var plainShow bytes.Buffer
+	writeView(&plainShow, pv)
+	if strings.Contains(plainShow.String(), "labels:") {
+		t.Fatalf("form show, no labels: %s", plainShow.String())
+	}
+	// a look-alike of a label (U+0261 script g, Coptic o) prints escaped, never as the label
+	fake := build([]string{"t", "reɡister-ok"}, []string{"t", "release-ⲟk"})
+	views, _ = fold([]item{{ev: fake, private: true}}, bob.pub, 200)
+	if len(views) != 1 {
+		t.Fatal("the look-alike's view")
+	}
+	if l := listLine(views[0]); !strings.Contains(l, `#re\u0261ister-ok #release-\u2c9fk`) || strings.Contains(l, "#release-ok") {
+		t.Fatalf("form list, a look-alike: %q", l)
+	}
+}
+
 func TestInteractiveCreate(t *testing.T) {
 	setup(t)
 	alice, bob := newActor(t, 1), newActor(t, 2)

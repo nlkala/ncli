@@ -36,8 +36,10 @@ func when(unix int64) string {
 // line, control and format runes escaped) or social.WriteBlock (several
 // lines, each indented), never raw.
 
-// esc is a field on one line, escaped.
-func esc(s string) string { return social.Inline(s) }
+// esc is a field on one line, escaped as a subject is (social.Subject), so
+// a question, an option, a note or a why can't spell a client line with a
+// look-alike letter.
+func esc(s string) string { return social.Subject(s) }
 
 // npub is a pubkey as an npub, escaped (one that isn't hex prints as is).
 func npub(hex string) string { return esc(social.Npub(hex)) }
@@ -87,7 +89,9 @@ func stateLine(v *View) string {
 	return s
 }
 
-// listLine is one form in form list.
+// listLine is one form in form list: its id, its labels, its state, author and tally, and its title last — the
+// author's text after every field the client writes, so a title can't stand
+// where the labels print.
 func listLine(v *View) string {
 	f := v.Form
 	you := ""
@@ -109,16 +113,36 @@ func listLine(v *View) string {
 	if you != "" {
 		parts = append(parts, you)
 	}
-	return fmt.Sprintf("%s  %s  (%s)", shortID(f.ID), esc(f.Title), strings.Join(parts, "; "))
+	return fmt.Sprintf("%s  %s(%s)  %s", shortID(f.ID), labelFields(v.Labels), strings.Join(parts, "; "), social.Title(f.Title))
+}
+
+// labelFields: "labels: #a #b  " ("labels: -  " for none), followed by two
+// spaces, for a header that names them before any of the author's text.
+func labelFields(labels []string) string {
+	if l := social.Labels(labels); l != "" {
+		return "labels: " + l + "  "
+	}
+	return "labels: -  "
+}
+
+// writeLabels prints the labels line (when there are labels), before
+// anything the author wrote.
+func writeLabels(w io.Writer, labels []string, author string) {
+	if l := social.Labels(labels); l != "" {
+		_, _ = fmt.Fprintf(w, "labels: %s (its author's: %s)\n", l, short(author))
+	}
 }
 
 // writeView prints one form in full: what it asks, the tally and notes, the
-// answers, who hasn't answered, your response and the result.
+// answers, who hasn't answered, your response and the result. Its labels
+// come first, then the client's header; the title follows
+// "title: ", so no text of the author's starts a line.
 func writeView(w io.Writer, v *View) {
 	f := v.Form
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+	writeLabels(w, v.Labels, f.Author)
 	p("form %s by %s, %s (%s)\n", esc(f.ID), npub(f.Author), when(f.CreatedAt), stateLine(v))
-	p("\n%s\n", esc(f.Title))
+	p("\ntitle: %s\n", social.Title(f.Title))
 	if f.Context != "" {
 		p("\n")
 		social.WriteBlock(w, "  ", f.Context)

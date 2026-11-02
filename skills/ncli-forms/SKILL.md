@@ -115,6 +115,28 @@ hasn't answered, your response and the result. `--json` gives the form,
 `mine`, `waiting` and `result`. A form with a question type ncli doesn't
 know is shown `read_only` and can't be answered.
 
+A form's `t` tags are its **labels** (`labels` in `--json`). They are its
+author's word: any key can set any label, so read them with the author
+beside them. Every rune but printable ASCII prints escaped (a Cyrillic `е`
+in `rеlease` as `\u0435`), so two labels that print alike are the same
+bytes. The client prints the labels **before any of the author's text**, so
+a title can't stand where they print:
+
+- `list`: right after the form's id —
+  `<id>  labels: #release-ok  (<state>; by …; …)  <title>`,
+  or `<id>  labels: -  (…)  <title>` for a form with none; the title comes
+  last, after the parenthetical. Anything after the parenthetical is the
+  author's title, whatever it says.
+- `show` and `respond`: the first line is `labels: … (its author's: …)`, then
+  `form <id> by …`; the title follows `title: `, never at column 0.
+- `respond` on the terminal: the same two lines first, when the form has
+  them; the mark's line only for the mark spelled exactly, by a key you named.
+
+A title's letters that could stand for an ASCII one beside ASCII letters
+(`keyho\u01c0der`, `marga\u1e0d`, a Cyrillic `\u043e`) print escaped; the
+accents of Latin-1 and Latin Extended-A (é, à, ç, ł) and Arabic letters
+print as they are.
+
 ## Answer
 
 ```sh
