@@ -11,6 +11,7 @@ import (
 
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
+	"github.com/ohstr/nmilat/nip42"
 	"github.com/ohstr/nmilat/nipOA"
 )
 
@@ -117,6 +118,20 @@ func TestWithAuthSigns(t *testing.T) {
 			t.Errorf("kind %d tagged", kind)
 		}
 	}
+	// a NIP-42 client-auth (kind 22242) login event is never tagged, even
+	// under an empty-conditions attestation whose kind/time clauses are
+	// vacuously true for every event -- the shape that would otherwise
+	// over-tag it and make an auth-required relay reject the login.
+	open := WithAuth(agent, attest(t, ownerPriv, agent.PubKey(), ""))
+	login := nip42.NewAuthEvent("challenge", "wss://relay.example")
+	tags := len(login.Tags)
+	if err := open.Sign(ctx, login); err != nil {
+		t.Fatal(err)
+	}
+	if hasAuth(login) || len(login.Tags) != tags {
+		t.Fatalf("kind %d login tagged: %v", login.Kind, login.Tags)
+	}
+
 	// an event that already carries one keeps its own
 	own := nip01.NewEvent(1, "x")
 	own.CreatedAt = 1800000000
@@ -139,6 +154,36 @@ func TestWithAuthSigns(t *testing.T) {
 	}
 	if WithAuth(agent, nil) != client.Crypto(agent) {
 		t.Fatal("no tag: not the signer itself")
+	}
+}
+
+// cryptoNoKeys is a client.Crypto with no MessageKeys method -- like a
+// bunker signer that cannot reveal NIP-44 keys.
+type cryptoNoKeys struct{ inner *client.LocalSigner }
+
+func (c cryptoNoKeys) PubKey() string { return c.inner.PubKey() }
+func (c cryptoNoKeys) Sign(ctx context.Context, ev *nip01.Event) error {
+	return c.inner.Sign(ctx, ev)
+}
+func (c cryptoNoKeys) Encrypt(ctx context.Context, scheme, peer, pt string) (string, error) {
+	return c.inner.Encrypt(ctx, scheme, peer, pt)
+}
+func (c cryptoNoKeys) Decrypt(ctx context.Context, scheme, peer, ct string) (string, error) {
+	return c.inner.Decrypt(ctx, scheme, peer, ct)
+}
+
+// WithAuth exposes MessageKeys only when the wrapped signer can derive them,
+// so the capability guard in a proof (cli/dm/prove.go) still rejects signers
+// that can't, instead of the wrapper masquerading as capable and failing late.
+func TestWithAuthMessageKeyer(t *testing.T) {
+	agent := localSigner(t, agentPriv)
+	tag := attest(t, ownerPriv, agent.PubKey(), "")
+
+	if _, ok := WithAuth(agent, tag).(client.MessageKeyer); !ok {
+		t.Error("key-capable inner: wrapper is not a MessageKeyer")
+	}
+	if _, ok := WithAuth(cryptoNoKeys{inner: agent}, tag).(client.MessageKeyer); ok {
+		t.Error("key-incapable inner: wrapper wrongly a MessageKeyer")
 	}
 }
 
