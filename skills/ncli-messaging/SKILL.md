@@ -262,6 +262,26 @@ ncli find -f --kinds 1,1111 --tag e=<event-id> -s wss://relay.example | head -n1
 A dropped relay is redialed. With `--state`, delivery across a restart is at
 least once and never skips an event.
 
+## Signing as an attested key (NIP-OA)
+
+A key that acts for an owner (an agent's key, a bot's) can carry the owner's
+NIP-OA attestation, an `auth` tag `["auth", <owner hex>, <conditions>, <sig>]`
+signed by the owner for this key. Give it once and every event the command
+signs carries it:
+
+```sh
+export NCLI_AUTH_TAG='["auth","<owner hex>","kind=14&created_at<1800000000","<sig>"]'
+ncli dm send --to npub1bob... "done" -s wss://relay.example --signer bunker+unix:///run/signer.sock
+```
+
+`--auth '<json>'` does the same for one command. The tag is checked first
+(this signer's key, the owner's signature, NIP-OA's condition grammar); a bad
+one is an `invalid_input` error. It goes on every event whose kind and time
+meet its conditions: a DM's or a private form's rumor (inside the seal, so a
+reader sees it after opening), a group or public form, posts, replies and
+reactions. A seal and a gift wrap never carry it (NIP-59), and an event that
+already has an `auth` tag keeps its own.
+
 ## Naming people
 
 Wherever a person is asked for (`--to`, `--from`, `-m`, `--mentions`,

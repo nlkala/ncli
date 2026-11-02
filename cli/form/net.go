@@ -304,6 +304,7 @@ func deliver(ctx context.Context, cmd *cobra.Command, p place, signer client.Cry
 	switch {
 	case private:
 		d.Where = "private"
+		social.AddAuth(signer, ev) // --auth: the rumor carries it, inside the seal
 		wraps, err := nippf.Wrap(ctx, signer, ev, to)
 		if err != nil {
 			return nil, social.SignerError(cmd, err)

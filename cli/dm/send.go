@@ -129,6 +129,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 // pubkey; the copy has the same id.
 func wrapForBoth(cmd *cobra.Command, signer client.Crypto, rumor *nip01.Event, recipient string) ([]*nip01.Event, error) {
 	me := strings.ToLower(signer.PubKey())
+	social.AddAuth(signer, rumor) // --auth: the rumor carries it, inside the seal
 	wraps, err := sealTo(cmd, signer, rumor, recipient)
 	if err != nil {
 		return nil, err
