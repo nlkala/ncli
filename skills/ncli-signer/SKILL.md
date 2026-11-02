@@ -124,6 +124,8 @@ ncli signer check --policy policy.yaml -e events.json --pubkey npub1... --json
 ncli signer check --policy policy.yaml -e state.json --attestations approval.json \
   --pubkey npub1... --now 2026-10-08T12:00:00Z --start-time 2026-10-08T11:00:00Z
 ncli signer check --policy policy.yaml --method nip44_decrypt --counterpart npub1... --pubkey npub1...
+ncli signer check --policy policy.yaml --method nipoa_attest --subordinate npub1... \
+  --conditions 'created_at<1767225600' --pubkey npub1... --now 2026-10-08T12:00:00Z
 ```
 
 `check` cannot reproduce two things the live signer does:

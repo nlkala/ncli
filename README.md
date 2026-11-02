@@ -1268,6 +1268,30 @@ open gift wraps only from listed senders, and `nip44_message_keys` (for
 [`skills/ncli-messaging/SKILL.md`](skills/ncli-messaging/SKILL.md) and
 [`examples/signer/messaging-policy.yaml`](examples/signer/messaging-policy.yaml).
 
+## `form`, questions answered in one response (NIP-PF)
+
+Forms ask one or more questions — single or multiple choice, text, number,
+date, time — with the option their author recommends and why, notes
+required on some options, defaults, a quorum and an end. Each responder
+answers every question in one response (the latest counts), and the author
+closes the form with a result: decided, default or cancelled. A form is
+private (one rumor gift-wrapped to each responder and to you, sent to `-s`
+only; `--inbox` adds each recipient's DM relays, kind 10050), in a NIP-29
+group, or public; everything is signed through `--signer`.
+
+```sh
+ncli form create --spec ask.json --to npub1bob... -s wss://inbox.example --signer bunker+unix:///run/signer/agent.sock
+ncli form list --open -s wss://inbox.example
+ncli form show 3f2a9c -s wss://inbox.example
+ncli form respond 3f2a9c --choose revert --note revert="after lunch" -s wss://inbox.example
+ncli form respond 3f2a9c -s wss://inbox.example     # question by question on the terminal
+ncli form result 3f2a9c --status decided --choose revert --content "reverted" -s wss://inbox.example
+```
+
+A response the form refuses is refused before anything is sent. The rules
+are nmilat's `nippf` (ohstr's NIP-PF draft). See
+[`skills/ncli-forms/SKILL.md`](skills/ncli-forms/SKILL.md).
+
 ## `blossom`
 
 Upload, fetch, and manage media: a client for the
@@ -1348,7 +1372,8 @@ ncli id delegate --issuer mykey --delegatee otherkey --json
 
 The vault is encrypted under a password. `ncli id sign` signs an unsigned
 event with an identity's private key; `ncli id delegate` mints a NIP-26
-delegation token from one.
+delegation token from one; `ncli id attest <npub> --until <time>` signs a
+NIP-OA owner attestation with an identity or through `--signer`.
 
 ![`ncli id` generating a keypair, then inspecting a nip-05 address](docs/vhs/id.gif)
 

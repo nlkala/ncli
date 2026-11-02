@@ -175,11 +175,40 @@ func publishMembershipAdminEvent(ctx context.Context, store *relay.EventStore, e
 func handleInviteCreate(admin membershipAdmin) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			TTL     string   `json:"ttl,omitempty"`
-			MaxUses int      `json:"max_uses,omitempty"`
-			Roles   []string `json:"roles,omitempty"`
+			TTL       string   `json:"ttl,omitempty"`
+			ExpiresAt *int64   `json:"expires_at,omitempty"`
+			MaxUses   int      `json:"max_uses,omitempty"`
+			Roles     []string `json:"roles,omitempty"`
 		}
 		if !decodeAdminBody(w, r, &body) {
+			return
+		}
+
+		// An absolute expires_at -- what `ncli relay invites create
+		// --expires-at/--no-expiry` sends -- is validated by the SAME shared
+		// resolveInviteLimits validator createclaimwithlimits uses, so the CLI
+		// and the NIP-86 method agree on what is in-policy: 0 = never (gated by
+		// inviteAllowNoExpiry), otherwise future and <= inviteMaxTTL, never
+		// clamped. max_uses keeps the route's own pass-through semantics
+		// (0 = unlimited), so it is not run through the validator's >=1 rule.
+		if body.ExpiresAt != nil {
+			policy := invitePolicy{
+				defaultTTL:     membershipInviteTTL(),
+				maxTTL:         membershipInviteMaxTTL(),
+				allowNoExpiry:  membershipInviteAllowNoExpiry(),
+				defaultMaxUses: membershipInviteMaxUses(),
+			}
+			expiresAt, _, err := resolveInviteLimits(time.Now(), inviteLimits{ExpiresAt: body.ExpiresAt}, policy)
+			if err != nil {
+				writeAdminError(w, err)
+				return
+			}
+			claim, err := admin.issueInviteGenerated(expiresAt, body.MaxUses, body.Roles)
+			if err != nil {
+				writeAdminError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, claim)
 			return
 		}
 

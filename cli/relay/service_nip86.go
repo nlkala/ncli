@@ -1,7 +1,9 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -14,6 +16,19 @@ import (
 // configures none and a caller names a claim code explicitly (the generated-code
 // path lets the SDK apply its default itself).
 const defaultInviteTTL = 24 * time.Hour
+
+// defaultInviteMaxTTL caps how far in the future createclaimwithlimits will
+// honour an explicit expires_at when membership.inviteMaxTTL is unset -- 30
+// days. An out-of-range expiry is refused, never clamped.
+const defaultInviteMaxTTL = 720 * time.Hour
+
+// Method names for the two PROPOSED NIP-86 additions. They are not yet in the
+// nmilat nip86 package's own constant set (the pinned rc.47), so they are named
+// here; move them to nip86.Method* once upstream adopts them.
+const (
+	nip86MethodCreateClaimWithLimits = "createclaimwithlimits"
+	nip86MethodGetClaim              = "getclaim"
+)
 
 // nip86Admins is who may call the management API: the relay's own NIP-11 pubkey
 // (so an existing operator keeps working unchanged) plus any configured admins.
@@ -60,11 +75,74 @@ func membershipInviteMaxUses() int {
 	return 0
 }
 
+// membershipInviteMaxTTL is the ceiling createclaimwithlimits enforces on an
+// explicit absolute expiry, or the built-in default when unset. Startup
+// validation (command.go) rejects an unparseable or non-positive value, so a
+// bad config never reaches here.
+func membershipInviteMaxTTL() time.Duration {
+	if config.Membership != nil && config.Membership.InviteMaxTTL != "" {
+		if d, err := time.ParseDuration(config.Membership.InviteMaxTTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultInviteMaxTTL
+}
+
+// membershipInviteAllowNoExpiry reports whether createclaimwithlimits may mint
+// a never-expiring code (expires_at:0). Off by default: an invite that never
+// expires is a standing liability, so an operator opts in explicitly.
+func membershipInviteAllowNoExpiry() bool {
+	return config.Membership != nil && config.Membership.InviteAllowNoExpiry
+}
+
+// membershipMemberClaims reports whether a plain member (not an admin) may mint
+// an invite via createclaim. Default true, per the NIP-43 spec. The integration
+// pass (section B) reads this to decide the nip86 Authorize/Visible wiring; it
+// has no effect until that wiring lands.
+func membershipMemberClaims() bool {
+	if config.Membership == nil || config.Membership.MemberClaims == nil {
+		return true
+	}
+	return *config.Membership.MemberClaims
+}
+
 // newNip86Router binds the NIP-86 methods onto the same membershipAdmin the
 // REST routes use. Pubkey, claim and role methods are all backed by NIP-43
 // state that already existed; nothing here keeps state of its own.
 func newNip86Router(admin membershipAdmin) *nip86.Router {
 	router := nip86.NewRouter()
+
+	// Section B -- member claims. When membershipMemberClaims() is true a plain
+	// member key reaches the Router (newNip86Handler sets nip86.Config.Authorize
+	// to the membership IsMember check), so the Router must scope what a
+	// non-admin may do: a member sees (via supportedmethods) and may call ONLY
+	// createclaim + supportedmethods; every other method -- createclaimwithlimits,
+	// getclaim, listclaims, deleteclaim, the pubkey methods, the role methods and
+	// all moderation methods registered later -- is admin-only. Dispatch refuses
+	// a hidden method (reported as unknown), so this both filters the advertised
+	// list and enforces it. A non-admin that reaches here is necessarily a member,
+	// because Authorize 401s any other non-admin before Dispatch is consulted.
+	//
+	// When membershipMemberClaims() is false, Authorize stays nil so only admins
+	// reach the Router at all; leaving Visible nil then keeps the admin-only
+	// behaviour exactly as before.
+	if membershipMemberClaims() {
+		admins := nip86Admins()
+		isAdmin := func(caller string) bool {
+			for _, a := range admins {
+				if a == caller {
+					return true
+				}
+			}
+			return false
+		}
+		router.Visible = func(caller, method string) bool {
+			if isAdmin(caller) {
+				return true
+			}
+			return method == nip86.MethodCreateClaim || method == nip86.MethodSupportedMethods
+		}
+	}
 
 	router.Handle(nip86.MethodAllowPubkey, func(ctx context.Context, _ string, req nip86.Request) (any, error) {
 		pubkey, err := req.StringParam(0)
@@ -100,8 +178,12 @@ func newNip86Router(admin membershipAdmin) *nip86.Router {
 		return pubkeys, nil
 	})
 
-	// The claim object, not a bare code: the caller needs the expiry and
-	// remaining uses to tell a guest what it is getting.
+	// createclaim has two shapes that must both keep working:
+	//   - [code]  (spec form): store the caller's code with config defaults and
+	//     answer `true`. A client-chosen code must meet the min-strength bar.
+	//   - [] / [""] (legacy): the relay generates the code and returns the full
+	//     InviteClaim record -- released bzzapp depends on this, so it is left
+	//     exactly as it was.
 	router.Handle(nip86.MethodCreateClaim, func(_ context.Context, _ string, req nip86.Request) (any, error) {
 		code := ""
 		if len(req.Params) > 0 {
@@ -110,11 +192,93 @@ func newNip86Router(admin membershipAdmin) *nip86.Router {
 				return nil, err
 			}
 		}
-		return admin.issueInviteCode(code, membershipInviteTTL(), membershipInviteMaxUses(), nil)
+		if code != "" {
+			if err := validateClaimStrength(code); err != nil {
+				return nil, err
+			}
+		}
+		claim, err := admin.issueInviteCode(code, membershipInviteTTL(), membershipInviteMaxUses(), nil)
+		if err != nil {
+			return nil, err
+		}
+		if code != "" { // spec form: answer true
+			return true, nil
+		}
+		return claim, nil // legacy generate form: full record
 	})
 
+	// createclaimwithlimits is a PROPOSED NIP-86 addition: a caller-named code
+	// carrying an explicit expiry and/or use cap, validated against the relay's
+	// policy and never clamped. Always `true` on success; always an error (and
+	// no code created) on a bad claim, unknown field, wrong type, duplicate, or
+	// out-of-policy limit. Admin-only (see the Visible TODO below).
+	router.Handle(nip86MethodCreateClaimWithLimits, func(_ context.Context, _ string, req nip86.Request) (any, error) {
+		code, err := req.StringParam(0)
+		if err != nil {
+			return nil, err
+		}
+		if code == "" {
+			return nil, badInput("invite code is required")
+		}
+		if err := validateClaimStrength(code); err != nil {
+			return nil, err
+		}
+
+		// A strict decode: an unknown key, or expires_at/max_uses given as
+		// anything but a JSON integer, is a caller error, never silently
+		// dropped. An absent params[1] (no limits object at all) means
+		// all-defaults.
+		var lim inviteLimits
+		if len(req.Params) > 1 {
+			dec := json.NewDecoder(bytes.NewReader(req.Params[1]))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&lim); err != nil {
+				return nil, badInput("invalid limits object: %v", err)
+			}
+		}
+
+		policy := invitePolicy{
+			defaultTTL:     membershipInviteTTL(),
+			maxTTL:         membershipInviteMaxTTL(),
+			allowNoExpiry:  membershipInviteAllowNoExpiry(),
+			defaultMaxUses: membershipInviteMaxUses(),
+		}
+		expiresAt, maxUses, err := resolveInviteLimits(time.Now(), lim, policy)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := admin.issueInviteWithLimits(code, expiresAt, maxUses, nil); err != nil {
+			return nil, err
+		}
+		return true, nil
+	})
+
+	// listclaims answers a plain list of LIVE code strings (not expired, not
+	// used up). The spec says expired/used-up codes SHOULD NOT be listed here;
+	// a caller that needs full records (incl. dead ones) uses getclaim or the
+	// REST route instead.
 	router.Handle(nip86.MethodListClaims, func(context.Context, string, nip86.Request) (any, error) {
-		return admin.listInvites()
+		return admin.liveInviteCodes()
+	})
+
+	// getclaim is a PROPOSED NIP-86 addition: the state of any stored code,
+	// including expired/used-up ones, until it is deleted or pruned. The output
+	// field is `claim` (the spec's name), not the record's `code`. Admin-only.
+	router.Handle(nip86MethodGetClaim, func(_ context.Context, _ string, req nip86.Request) (any, error) {
+		code, err := req.StringParam(0)
+		if err != nil {
+			return nil, err
+		}
+		claim, err := admin.getInvite(code)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"claim":      claim.Code,
+			"expires_at": claim.ExpiresAt,
+			"max_uses":   claim.MaxUses,
+			"uses":       claim.Uses,
+		}, nil
 	})
 
 	router.Handle(nip86.MethodDeleteClaim, func(_ context.Context, _ string, req nip86.Request) (any, error) {
@@ -198,9 +362,24 @@ func newNip86Handler(wsHandler *relay.SessionHandler, store *relay.EventStore, r
 		router = newNip86Router(membershipAdmin{ws: wsHandler, store: store, rooms: rooms})
 	}
 	registerModerationMethods(router, moderation, store)
-	return nip86.NewHandler(nip86.Config{
+
+	cfg := nip86.Config{
 		Router:         router,
 		AllowedPubkeys: admins,
 		AllowedOrigins: origins,
-	}), nil
+	}
+
+	// Section B -- member claims. When membership is on and memberClaims is
+	// enabled, admit a verified member key that is not in AllowedPubkeys so it
+	// can reach the Router; NIP-98 still checks the signature/payload/URL for
+	// everyone, and the Router's Visible predicate (set in newNip86Router)
+	// confines a member to createclaim + supportedmethods. A verified key that
+	// is neither an admin nor a member is still a 401. Membership off, or
+	// memberClaims off, leaves Authorize nil: only AllowedPubkeys (the admins)
+	// pass, exactly as before.
+	if membershipOn() && membershipMemberClaims() {
+		cfg.Authorize = wsHandler.Membership().IsMember
+	}
+
+	return nip86.NewHandler(cfg), nil
 }

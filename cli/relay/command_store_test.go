@@ -90,4 +90,9 @@ func TestNewServer_WarnsOnIndexMismatch(t *testing.T) {
 	s := NewServer(store, nil)
 	t.Cleanup(s.Stop)
 	require.Contains(t, buf.String(), "opened with other indexes")
+	// serve() logs "listening..." from its own goroutine, through the global
+	// logger the cleanup above restores: wait for that line (read under
+	// buf's lock), so the restore never races its read of log.Logger.
+	require.Eventually(t, func() bool { return strings.Contains(buf.String(), "listening...") },
+		10*time.Second, 5*time.Millisecond)
 }

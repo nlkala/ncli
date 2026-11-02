@@ -1,14 +1,38 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0-rc.48]
 
 ### Added
 
 - Adds `dm react` and `dm unreact`: NIP-25 reactions and their NIP-09 retractions inside NIP-17 gift wraps, to the conversation's participants and a copy to yourself. `dm read` shows them as `reaction` / `delete` entries, and `--fold` applies the deletions (each only to its own author's events) and folds reactions into the messages they react to.
+- Adds the signer's `nipoa_attest` method and `attest` rule (`subordinates`, a required `max_until`, `kinds`): an attestation is signed only when such a rule allows it, so existing policies refuse every one. `signer check --method nipoa_attest --subordinate --conditions` decides one offline.
+- Adds `ncli id attest`, which signs a NIP-OA owner attestation with `--identity` or through `--signer` and prints the `auth` tag, verified.
+- Adds `ncli form create/list/show/respond/withdraw/result`: NIP-PF forms (kinds 1069, 1019, 1070) -- questions with the recommended option and why, notes required on some options, defaults, quorum and an end, answered in one response and closed by the author with a result (decided, default, cancelled). A form is private (`--to`: gift-wrapped to each responder and to you), in a NIP-29 group (`--group --relay`) or public; `respond` refuses a response the form doesn't accept before anything is sent. Every rule is nmilat's `nippf`.
+- Adds the `ncli-forms` skill.
+- Adds labels to `dm` and `form`: an event's `t` tags print as `#label` (printable ASCII, every other rune escaped) after the author and before the subject or title, and `dm send --label` sets them.
+- Adds `--auth` (and `NCLI_AUTH_TAG`) to every command that signs through `--signer`: a NIP-OA `auth` tag, checked against the signer's key, added to every event it signs whose kind and time its conditions allow -- on a DM's or a private form's rumor too, inside the seal; never on a seal, a gift wrap or a NIP-42 login event.
+
+### Changed
+
+- Changes subjects, titles and message lines to print a non-ASCII letter that sits beside ASCII letters as an escape (look-alikes such as a Cyrillic `е`), collapse padding, and cap titles at 200 runes.
 
 ### Fixed
 
+- Fixes ncli's own NIP-98 headers (relay admin, huddle) tagging their anti-replay value `nonce`, which NIP-13 reads as a proof-of-work claim, so a socket signer's client refused them. They tag `salt`, as nmilat's `nip98.Sign` does; verifiers never read it, so old and new headers interoperate.
+- Fixes text output printing fields a relay or another author controls (message content and subject, reactions, group, space and profile fields, relays' OK messages, blossom errors) raw: control, separator and format characters (bidi, zero-width, tags) and invalid UTF-8 now print as Go escapes, and multi-line content stays indented, so remote text can't forge a line, move the cursor or reorder what the terminal shows. `--json` is unchanged.
 - Fixes the signer charging an `unwrap_from` rule's rate before it knew the seal's author, so gift wraps from anyone could use up a listed sender's rate. The rate is charged only for a wrap the rule releases; refused wraps are remembered and refused again without decryption; `dm read` retries a wrap refused for rate instead of skipping it.
+
+## [0.8.0-rc.47]
+
+### Added
+
+- Adds the proposed NIP-86 `createclaimwithlimits` and `getclaim` methods, so a host's app can mint an invite with an explicit per-code expiry or use-limit and read any code's state back. `ncli relay invites create` gains `--expires-at` and `--no-expiry`, and `ncli relay invites get <code>` shows a code's claim, expiry, max-uses and uses, including expired or used-up ones. ([#221](https://github.com/ohstr/ncli/pull/221))
+- Adds the `membership.inviteMaxTTL` (default 30 days) and `inviteAllowNoExpiry` (default false) config keys, which cap how far an absolute expiry may be set and gate never-expiring codes. A requested limit outside policy is refused, never silently clamped. ([#221](https://github.com/ohstr/ncli/pull/221))
+- Adds NIP-43 member claims: with `membership.memberClaims` (default true), a plain member — not only an admin — may mint an invite via `createclaim`, scoped to just `createclaim` and `supportedmethods`. Set it false to keep the Relay Management API admin-only. ([#221](https://github.com/ohstr/ncli/pull/221))
+
+### Fixed
+
+- Fixes the vault password prompt failing with `inappropriate ioctl for device` when the event is piped into a signing command (e.g. `ncli event new … | ncli publish -e - --signer <label>`). The prompt now reads from the controlling terminal, like ssh/sudo, and falls back to a clear "set NCLI_VAULT_PASSWORD" error when no terminal is available instead of the cryptic ioctl one. ([#206](https://github.com/ohstr/ncli/pull/206))
 
 ## [0.8.0-rc.46]
 

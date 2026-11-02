@@ -94,12 +94,12 @@ func runIDImport(cmd *cobra.Command, _ []string) error {
 		return common.UsageError(cmd, errors.New("no key given; pipe it on stdin or pass --file (--json never prompts)"))
 	default:
 		_, _ = fmt.Fprint(os.Stderr, "Private key (nsec, hex or ncryptsec): ")
-		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		s, err := keyresolve.ReadSecretTTY()
 		_, _ = fmt.Fprintln(os.Stderr)
 		if err != nil {
 			return common.RuntimeError(cmd, err)
 		}
-		src = strings.NewReader(string(b))
+		src = strings.NewReader(s)
 	}
 
 	key, skipped, err := scanImportKey(src)
