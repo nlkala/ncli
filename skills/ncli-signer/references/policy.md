@@ -21,13 +21,15 @@ selector, unless serve/check runs with `--allow-catch-all`.
 
 | Field | Applies to | Matches when |
 |---|---|---|
-| `methods` | all | the method is listed: `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `nip44_message_keys` |
+| `methods` | all | the method is listed: `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `nip44_message_keys`, `nipoa_attest` |
 | `kinds` | `sign_event` | the event kind is listed |
 | `tags` | `sign_event` | for every key, some tag with that name has a first value matching an entry: exact, or a prefix when the entry ends in `*` |
+| `tags_one` | `sign_event` | for every key, the event has exactly one tag with that name, and its first value matches an entry (as in `tags`); a second tag of the name, listed or not, fails it |
 | `counterparts` | encrypt/decrypt | the peer pubkey (npub or hex) is listed |
 | `unwrap_from` | `nip44_decrypt` | any counterpart; the result is released only if it is a kind 13 seal that verifies, signed by a listed pubkey |
+| `attest` | `nipoa_attest` | the subordinate key is in `attest.subordinates` (npub/hex, or `"*"`); see [NIP-OA attestations](#nip-oa-attestations) |
 
-- **Default methods.** If `methods` is omitted, `kinds`/`tags` imply
+- **Default methods.** If `methods` is omitted, `kinds`/`tags`/`tags_one` imply
   `[sign_event]`, `counterparts` implies all four encrypt/decrypt
   methods (not `nip44_message_keys`, which must be named), and
   `unwrap_from` implies `[nip44_decrypt]`.
@@ -48,6 +50,42 @@ selector, unless serve/check runs with `--allow-catch-all`.
 `*_encrypt` request's plaintext. The reason names the pattern by its
 index (`pattern #2`), not its text.
 
+## NIP-OA attestations
+
+`nipoa_attest` (ncli's own method, used by `ncli id attest --signer`) signs a
+NIP-OA owner attestation: the tag `["auth", <signer>, <conditions>, <sig>]`
+for a subordinate key. The signer takes the subordinate key (64 lowercase
+hex) and the conditions, checks the conditions' grammar, and signs
+SHA-256 of NIP-OA's preimage (`nostr:agent-auth:<subordinate>:<conditions>`),
+which it builds itself: it never signs a digest it is handed, so it can't
+be made to sign an event id.
+
+```yaml
+  - name: attest-one
+    allow: {attest: {subordinates: [npub1...], max_until: 30d}}
+    rate: 6/h
+  - name: attest-notes
+    allow: {attest: {subordinates: ["*"], max_until: 7d, kinds: [1]}}
+```
+
+- **Default deny.** Only a rule with an `attest` selector allows an
+  attestation: a catch-all `allow: {}` does not, nor does any rule for
+  events or encryption. `deny: {}` and `deny: {attest: {subordinates: [...]}}`
+  deny them.
+- **`max_until` is required** in an allow rule (`30d`, `12h`): the
+  conditions must carry a `created_at<` bound in the future, no further
+  than `max_until` ahead. An attestation without an end is refused.
+- **`kinds`**, when set, requires at least one `kind=` clause, each one
+  listed.
+- **Never itself.** A key can't attest itself.
+- **Stands alone.** `attest` takes no `kinds`/`tags`/`counterparts`, and
+  its rule takes no `deny_matching` or `require`; a `rate` applies.
+- Each attestation is logged with `subordinate` and `conditions` (never the
+  signature).
+- Offline: `ncli signer check --method nipoa_attest --subordinate <key>
+  --conditions <conditions> --pubkey <signer>` decides as the signer would,
+  as of `--now`.
+
 ## Scope authentication kinds
 
 NIP-42 (22242) and NIP-98 (27235) events are login credentials. An
@@ -58,7 +96,7 @@ in as the signer's key on *any* relay or HTTP service. Pin them:
   - name: relay-auth
     allow:
       kinds: [22242]
-      tags: {relay: ["wss://relay.example", "wss://relay.example/*"]}
+      tags_one: {relay: ["wss://relay.example", "wss://relay.example/*"]}
   - name: http-auth
     allow:
       kinds: [27235]
@@ -68,6 +106,22 @@ in as the signer's key on *any* relay or HTTP service. Pin them:
 - **Exact host.** List the bare host exactly, *and* with `/*`. A bare
   prefix such as `wss://relay.example*` would also match
   `wss://relay.example.evil.example`.
+- **One relay tag.** Pin a login's `relay` with `tags_one`, not `tags`:
+  `tags` matches when *some* `relay` tag is listed, so a 22242 carrying
+  two -- yours and another relay's -- passes it, and a relay that takes
+  any of an event's `relay` tags accepts that login. `tags_one` takes
+  exactly one `relay` tag, and only a listed one. A key may sit in
+  `tags` or in `tags_one`, not both.
+- **A deny with `tags_one` is weaker than with `tags`.** `tags_one`
+  matches only an event with exactly one tag of the name, so a `deny`
+  written with it lets through an event that carries the denied value
+  *and* a second tag of the name (listed or not): the deny doesn't
+  match, and the next rule decides. To refuse a value wherever it
+  appears, deny with `tags`; keep `tags_one` for allows.
+- **Tag names are case-sensitive.** A name is compared byte for byte: a
+  rule on `t` doesn't see a `T` tag, nor a look-alike letter of another
+  script. A deny names one spelling only; to refuse what you didn't
+  foresee, allow a closed list and end with `deny: {}`.
 - **AND across keys.** All tag keys must match. In the example above,
   `method: DELETE` on the git host is denied.
 
@@ -157,3 +211,14 @@ A `sign_event`'s `created_at` is checked inside the matched rule:
 
 `rate: 60/m` gives a burst of 60 that refills at 60 per minute, with one
 bucket per rule. A rate change on reload resets that rule's bucket.
+
+An `unwrap_from` rule's rate counts only the wraps it releases: who sealed
+a wrap is known only once it is decrypted, so the token is taken then, and
+a refused wrap (not addressed to the signer, not a seal, sealed by a
+sender the rule does not list) takes none. Anyone can address wraps to
+the key; they can't spend the listed senders' rate. A refused wrap is
+remembered (the last 4096, until the policy changes) and refused again at
+once, with no decryption. While the bucket is empty, an unwrap is refused
+before decrypting. A refusal for rate ends in `rate limit exceeded`: the
+caller tries again later (`dm read` waits and retries; any other refusal
+is final).

@@ -60,7 +60,7 @@ rules:
   - name: relay-login
     allow:
       kinds: [22242]
-      tags: {relay: ["wss://relay.example", "wss://inbox.example"]}
+      tags_one: {relay: ["wss://relay.example", "wss://inbox.example"]}
 
   - name: everything-else
     deny: {}

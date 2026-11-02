@@ -12,6 +12,7 @@ import (
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
+	nipsigner "github.com/ohstr/ncli/signer"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip46"
 	"github.com/ohstr/nmilat/nip59"
@@ -66,6 +67,7 @@ const (
 	opened  outcome = iota
 	skipped         // from a sender not asked for, or the signer refused
 	invalid         // not addressed to us, or malformed
+	limited         // the signer refused it for its rule's rate: try again later
 )
 
 // openWrap opens wrap through signer, only for seals by from. A failure to
@@ -78,6 +80,8 @@ func openWrap(ctx context.Context, signer client.Crypto, wrap *nip01.Event, from
 			_ = nip59.PrepareRumor(o.Rumor, o.Sender)
 		}
 		return o, opened, nil
+	case nipsigner.RateLimited(err):
+		return nil, limited, nil
 	case errors.Is(err, nip59.ErrForeignSender), errors.Is(err, nip46.ErrDenied):
 		return o, skipped, nil
 	case transportFailure(err):

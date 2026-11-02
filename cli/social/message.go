@@ -28,7 +28,10 @@ type Message struct {
 	ReplyTo   string   `json:"reply_to,omitempty"`
 	Root      string   `json:"root,omitempty"`
 	Mentions  []string `json:"mentions"`
-	Content   string   `json:"content"`
+	// Labels are the event's t tags' values, as its author set them
+	// (TagLabels): its author's word, like its content.
+	Labels  []string `json:"labels,omitempty"`
+	Content string   `json:"content"`
 	// Type is "reaction" (a NIP-25 kind 7) or "delete" (a NIP-09 kind 5);
 	// empty for a message.
 	Type    string   `json:"type,omitempty"`
@@ -60,6 +63,7 @@ func FromEvent(ev *nip01.Event, channel string) Message {
 	m := Message{
 		ID: ev.ID, Channel: channel, From: strings.ToLower(ev.PubKey),
 		CreatedAt: ev.CreatedAt, Kind: ev.Kind, Content: ev.Content, Mentions: []string{},
+		Labels: TagLabels(ev.Tags),
 	}
 	seen := map[string]bool{}
 	hasE := false
@@ -150,15 +154,26 @@ func SortMessages(ms []Message) {
 // PrintMessage writes m as text: a header line, then the content indented.
 // Every field another member controls is escaped (Inline): the header and
 // a reaction print on one line each, and each content line stays indented,
-// so no text can start a line that looks like another message.
+// so no text can start a line that looks like another message. Its labels
+// print in the header, every rune but printable ASCII escaped (Labels),
+// after the author and before the subject, the first of the author's own
+// text; a message with no labels prints "labels: -" there, so a subject never stands where they print,
+// and the subject's look-alike letters print escaped (Subject).
 func PrintMessage(w io.Writer, m Message) {
 	at := time.Unix(int64(m.CreatedAt), 0).UTC().Format("2006-01-02 15:04")
 	head := fmt.Sprintf("%s  %s", at, Inline(Npub(m.From)))
 	if m.Group != "" {
 		head += "  in " + Inline(m.Group)
 	}
+	// the labels before the subject, the author's own text: a subject
+	// can't stand where they print
+	if len(m.Labels) > 0 {
+		head += "  labels: " + Labels(m.Labels)
+	} else {
+		head += "  labels: -"
+	}
 	if m.Subject != "" {
-		head += "  [" + Inline(m.Subject) + "]"
+		head += "  [" + Title(m.Subject) + "]"
 	}
 	if m.ReplyTo != "" {
 		head += "  ↩ " + short(m.ReplyTo)
@@ -306,10 +321,14 @@ func Inline(s string) string { return escape(s, false) }
 // WriteBlock writes multi-line text another member wrote, each line after
 // indent (CRLF is one break). Inside a line a CR, ESC, separator or format
 // character is escaped as Inline does, tabs kept, so the text can't start a
-// line at column 0 or move the cursor.
+// line at column 0 or move the cursor; and the letters that could stand for
+// an ASCII one beside ASCII letters escaped as in a subject (Guard: a
+// line "labels: #rel\u0435ase" can't pass for the client's own). A
+// line's padding is collapsed (collapseLine: its indentation kept up to 8
+// runes, every later run of spaces one space).
 func WriteBlock(w io.Writer, indent, s string) {
 	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
-		_, _ = fmt.Fprintf(w, "%s%s\n", indent, escape(line, true))
+		_, _ = fmt.Fprintf(w, "%s%s\n", indent, guard(escape(collapseLine(line), true)))
 	}
 }
 

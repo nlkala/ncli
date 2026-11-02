@@ -278,6 +278,25 @@ The wizard itself (no `--issuer`) is unchanged and still takes a raw
 private key (nsec or hex) typed directly into each step -- it does not
 resolve vault labels interactively.
 
+## `ncli id attest` — sign a NIP-OA owner attestation
+
+```sh
+# with a vault identity: attest bob's key for kind 1 until a date
+ncli id attest npub1bob... --until 2026-12-01T00:00:00Z --kind 1 --identity alice --json
+# through a socket signer: its policy decides (an attest rule), a denial exits 7
+ncli id attest npub1bob... --until 1795000000 --signer bunker+unix:///run/signer/agent.sock
+```
+
+Prints the tag `["auth", <attester>, <conditions>, <sig>]` the subordinate
+key carries (NIP-OA); `--json` adds `attester` and `conditions`. The
+conditions are built from the flags, `kind=N` then `created_at<T`; without
+`--until` the attestation never ends, which a signer's attest rule refuses
+(`max_until` is required there). The signature covers NIP-OA's preimage,
+never an event, and is verified before it is printed. A NIP-46 bunker
+(`bunker://`) has no attestation method: use a vault identity or an
+`ncli signer serve` socket. `ncli signer check --method nipoa_attest
+--subordinate <key> --conditions <c>` decides one offline against a policy.
+
 ## Gotchas learned
 
 - `ncli id delegate`'s wizard needs a real tty on both stdin and stdout —
