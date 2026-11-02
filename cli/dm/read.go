@@ -127,6 +127,10 @@ func runRead(cmd *cobra.Command, _ []string) error {
 			Emit: func(ev *nip01.Event, _ string) error {
 				m, show, record, err := r.open(ctx, ev)
 				switch {
+				case err != nil && ctx.Err() != nil:
+					// stopped while waiting on the signer's rate: the
+					// wrap stays unrecorded for the next run.
+					return client.ErrSkip
 				case err != nil:
 					return err
 				case show:
@@ -193,16 +197,54 @@ type reader struct {
 	from             []string
 	since            uint64
 	skipped, invalid int
+	limited          int
+	// wait sleeps before the n-th retry of a wrap the signer refused for
+	// its rate; nil is rateWait.
+	wait func(ctx context.Context, n int) error
+}
+
+// rateWait waits 1s, 2s, 4s... up to 30s between tries, or until ctx ends.
+func rateWait(ctx context.Context, n int) error {
+	d := time.Second << min(n, 5)
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // open returns the message in wrap, if it is one to print. record says
 // whether --state should remember the wrap: a message from another sender,
 // one the signer refused, or one older than --since is looked at again by a
-// later run.
+// later run. A wrap the signer refused for its rate is never skipped: open
+// waits and asks again until the signer opens or refuses it, or ctx ends
+// (then it returns ctx's error and the wrap stays unrecorded).
 func (r *reader) open(ctx context.Context, wrap *nip01.Event) (m social.Message, show, record bool, err error) {
-	o, out, err := openWrap(ctx, r.signer, wrap, r.from)
-	if err != nil {
-		return social.Message{}, false, false, err
+	wait := r.wait
+	if wait == nil {
+		wait = rateWait
+	}
+	var o *nip59.Opened
+	var out outcome
+	for n := 0; ; n++ {
+		o, out, err = openWrap(ctx, r.signer, wrap, r.from)
+		if err != nil {
+			return social.Message{}, false, false, err
+		}
+		if out != limited {
+			break
+		}
+		r.limited++
+		log.Warn().Str("wrap", wrap.ID).Msg("the signer's rate limit refused opening a gift wrap; trying again")
+		if err := wait(ctx, n); err != nil {
+			return social.Message{}, false, false, err
+		}
 	}
 	switch out {
 	case skipped:
@@ -221,7 +263,10 @@ func (r *reader) open(ctx context.Context, wrap *nip01.Event) (m social.Message,
 
 func (r *reader) report() {
 	if r.skipped > 0 {
-		log.Info().Int("skipped", r.skipped).Msg("messages from other senders left unopened")
+		log.Info().Int("skipped", r.skipped).Msg("messages from other senders, or that the signer's policy refused, left unopened")
+	}
+	if r.limited > 0 {
+		log.Info().Int("retries", r.limited).Msg("the signer's rate limit made opening wait")
 	}
 	if r.invalid > 0 {
 		log.Warn().Int("invalid", r.invalid).Msg("gift wraps could not be opened")
