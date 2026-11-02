@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/ohstr/ncli/cli/common"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip29"
@@ -152,14 +153,14 @@ func runShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if m := detail.Metadata; m != nil {
-		fmt.Printf("id:         %s\n", m.ID)
-		fmt.Printf("name:       %s\n", dashIfEmpty(m.Name))
-		fmt.Printf("about:      %s\n", dashIfEmpty(m.About))
+		fmt.Printf("id:         %s\n", social.Inline(m.ID))
+		fmt.Printf("name:       %s\n", social.Inline(dashIfEmpty(m.Name)))
+		fmt.Printf("about:      %s\n", social.Inline(dashIfEmpty(m.About)))
 		fmt.Printf("visibility: %s\n", visibilityLabel(m.Private))
 		fmt.Printf("membership: %s\n", membershipLabel(m.Closed))
-		fmt.Printf("parent:     %s\n", dashIfEmpty(m.Parent))
+		fmt.Printf("parent:     %s\n", social.Inline(dashIfEmpty(m.Parent)))
 		if len(m.Children) > 0 {
-			fmt.Printf("children:   %s\n", strings.Join(m.Children, ", "))
+			fmt.Printf("children:   %s\n", social.Inline(strings.Join(m.Children, ", ")))
 		}
 	} else {
 		fmt.Printf("id:         %s\n", groupID)
@@ -171,7 +172,7 @@ func runShow(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Println("admins:")
 		for _, a := range detail.Admins {
-			fmt.Printf("  %s\t%s\n", a.Pubkey, dashIfEmpty(strings.Join(a.Roles, ",")))
+			fmt.Printf("  %s\t%s\n", social.Inline(a.Pubkey), social.Inline(dashIfEmpty(strings.Join(a.Roles, ","))))
 		}
 	}
 
@@ -180,7 +181,7 @@ func runShow(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Println("members:")
 		for _, p := range detail.Members {
-			fmt.Printf("  %s\n", p)
+			fmt.Printf("  %s\n", social.Inline(p))
 		}
 	}
 

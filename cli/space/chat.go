@@ -10,6 +10,7 @@ import (
 
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/huddle"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip53"
@@ -182,7 +183,8 @@ func runChatList(cmd *cobra.Command, args []string) error {
 	}
 	for _, m := range messages {
 		ts := time.Unix(int64(m.CreatedAt), 0).UTC().Format("2006-01-02 15:04:05")
-		fmt.Printf("%s  %s  %s  %s\n", ts, m.ID[:8], m.Pubkey[:8], m.Content)
+		// The content is its author's text: one line, escaped.
+		fmt.Printf("%s  %s  %s  %s\n", ts, social.Inline(m.ID[:8]), social.Inline(m.Pubkey[:8]), social.Inline(m.Content))
 	}
 	return nil
 }

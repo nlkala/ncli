@@ -11,6 +11,7 @@ import (
 	"github.com/ohstr/ncli/cli/common"
 	"github.com/ohstr/ncli/cli/delegate"
 	"github.com/ohstr/ncli/cli/keyresolve"
+	"github.com/ohstr/ncli/cli/social"
 	"github.com/ohstr/ncli/client"
 	"github.com/ohstr/nmilat/nip19"
 	"github.com/rs/zerolog/log"
@@ -119,7 +120,7 @@ func runIDInspect(cmd *cobra.Command, arg string) error {
 	fmt.Println("hex pubkey:", result.PubKeyHex)
 	fmt.Println("npub:      ", result.Npub)
 	if result.Nip05 != "" {
-		fmt.Println("nip-05:    ", result.Nip05, "(resolved)")
+		fmt.Println("nip-05:    ", social.Inline(result.Nip05), "(resolved)")
 	}
 	if len(result.Relays) > 0 {
 		fmt.Println("relays:    ", strings.Join(result.Relays, ", "))

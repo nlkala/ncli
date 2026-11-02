@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ohstr/nmilat/nip01"
 	"github.com/ohstr/nmilat/nip10"
@@ -145,14 +148,17 @@ func SortMessages(ms []Message) {
 }
 
 // PrintMessage writes m as text: a header line, then the content indented.
+// Every field another member controls is escaped (Inline): the header and
+// a reaction print on one line each, and each content line stays indented,
+// so no text can start a line that looks like another message.
 func PrintMessage(w io.Writer, m Message) {
 	at := time.Unix(int64(m.CreatedAt), 0).UTC().Format("2006-01-02 15:04")
-	head := fmt.Sprintf("%s  %s", at, Npub(m.From))
+	head := fmt.Sprintf("%s  %s", at, Inline(Npub(m.From)))
 	if m.Group != "" {
-		head += "  in " + m.Group
+		head += "  in " + Inline(m.Group)
 	}
 	if m.Subject != "" {
-		head += "  [" + m.Subject + "]"
+		head += "  [" + Inline(m.Subject) + "]"
 	}
 	if m.ReplyTo != "" {
 		head += "  ↩ " + short(m.ReplyTo)
@@ -160,7 +166,7 @@ func PrintMessage(w io.Writer, m Message) {
 	_, _ = fmt.Fprintf(w, "%s  %s\n", head, short(m.ID))
 	switch m.Type {
 	case "reaction":
-		_, _ = fmt.Fprintf(w, "  %s on %s\n", m.Emoji, short(m.Target))
+		_, _ = fmt.Fprintf(w, "  %s on %s\n", ShowEmoji(m.Emoji), short(m.Target))
 		return
 	case "delete":
 		ids := make([]string, len(m.Targets))
@@ -170,18 +176,18 @@ func PrintMessage(w io.Writer, m Message) {
 		_, _ = fmt.Fprintf(w, "  removed %s\n", strings.Join(ids, ", "))
 		return
 	}
-	for _, line := range strings.Split(m.Content, "\n") {
-		_, _ = fmt.Fprintf(w, "  %s\n", line)
-	}
+	WriteBlock(w, "  ", m.Content)
 	if len(m.Reactions) > 0 {
-		// "reactions: 👀 2, 💬 1", in the order each emoji first came.
+		// "reactions: 👀 2, 💬 1", in the order each emoji first came;
+		// reactions that show alike (every "…") count together.
 		var emojis []string
 		n := map[string]int{}
 		for _, r := range m.Reactions {
-			if n[r.Emoji] == 0 {
-				emojis = append(emojis, r.Emoji)
+			e := ShowEmoji(r.Emoji)
+			if n[e] == 0 {
+				emojis = append(emojis, e)
 			}
-			n[r.Emoji]++
+			n[e]++
 		}
 		for i, e := range emojis {
 			emojis[i] = fmt.Sprintf("%s %d", e, n[e])
@@ -239,9 +245,107 @@ func Fold(ms []Message) []Message {
 	return out
 }
 
+// short is an id's first 12 bytes, escaped: a rumor's ids and tags are its
+// author's text, never checked as hex.
 func short(id string) string {
 	if len(id) > 12 {
-		return id[:12]
+		id = id[:12]
 	}
-	return id
+	return Inline(id)
+}
+
+// MaxEmojiRunes is the longest reaction ShowEmoji shows: enough for an
+// emoji's longest ZWJ sequence (a couple with two skin tones is 10 runes),
+// a flag's tag sequence or a short ":shortcode:".
+const MaxEmojiRunes = 10
+
+// ShowEmoji is a reaction's content as text shows it: as it is when it is
+// a short run of printable runes, else "…" (a reaction is no message).
+func ShowEmoji(e string) string {
+	if utf8.RuneCountInString(e) > MaxEmojiRunes || !utf8.ValidString(e) {
+		return "…"
+	}
+	rs := []rune(e)
+	for i, r := range rs {
+		switch {
+		case !unsafeRune(r):
+		case r == '\u200d' && i > 0 && i < len(rs)-1 && !unsafeRune(rs[i-1]) && !unsafeRune(rs[i+1]):
+			// a ZWJ sequence's joiner, between two visible runes
+		case isTag(r) && flagTags(rs):
+		default:
+			return "…"
+		}
+	}
+	return e
+}
+
+func isTag(r rune) bool { return r >= 0xE0020 && r <= 0xE007F }
+
+// flagTags reports whether rs is a flag's tag sequence: the black flag,
+// tags, and the cancel tag last. Tags anywhere else are hidden ASCII.
+func flagTags(rs []rune) bool {
+	if len(rs) < 3 || rs[0] != 0x1F3F4 || rs[len(rs)-1] != 0xE007F {
+		return false
+	}
+	for _, r := range rs[1:] {
+		if !isTag(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// Inline is s on one line: every control rune (C0, DEL, C1, tab included),
+// line or paragraph separator, format character (Unicode Cf: bidi marks,
+// overrides and isolates, zero-width characters) and invalid UTF-8 is
+// written as a Go escape (\n, \r, \x1b, \u2028, \u200b), so text another
+// member wrote can neither break a line, move the cursor, reorder what
+// follows it nor hide in plain sight.
+func Inline(s string) string { return escape(s, false) }
+
+// WriteBlock writes multi-line text another member wrote, each line after
+// indent (CRLF is one break). Inside a line a CR, ESC, separator or format
+// character is escaped as Inline does, tabs kept, so the text can't start a
+// line at column 0 or move the cursor.
+func WriteBlock(w io.Writer, indent, s string) {
+	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
+		_, _ = fmt.Fprintf(w, "%s%s\n", indent, escape(line, true))
+	}
+}
+
+// escape writes s's unsafe runes as Go escapes; keepTab leaves tabs as
+// they are (inside a message's indented content).
+func escape(s string, keepTab bool) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			_, _ = fmt.Fprintf(&b, `\x%02x`, s[i])
+		case r == '\t' && keepTab:
+			b.WriteRune(r)
+		case unsafeRune(r):
+			q := strconv.QuoteRuneToASCII(r)
+			b.WriteString(q[1 : len(q)-1])
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+func unsafeRune(r rune) bool {
+	switch {
+	case unicode.IsControl(r): // C0, DEL and C1 (NEL among them)
+		return true
+	case r == '\u2028', r == '\u2029': // line and paragraph separators
+		return true
+	case unicode.Is(unicode.Cf, r):
+		// Format characters: bidi marks, embeddings, overrides and isolates
+		// (U+200E/F, U+061C, U+202A-E, U+2066-9), zero-width ones (U+200B-D,
+		// U+2060, U+FEFF), the soft hyphen, tags.
+		return true
+	}
+	return false
 }
