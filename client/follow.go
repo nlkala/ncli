@@ -404,17 +404,39 @@ func (f *follower) resumeFilters(relay string) *nip01.SubscriptionFilterGroup {
 
 // stream runs one live subscription on sess until it drops. As for a
 // one-shot read, a login only matters once the relay refuses the REQ for
-// want of one.
+// want of one. Its stored events are paged back past the relay's cap
+// (followpage.go) while the live ones keep coming.
 func (f *follower) stream(ctx context.Context, sess *relaySession, relay string) error {
 	subID := uuid.NewString()
+	var pg *followPager
 	subscribe := func() error {
-		if !sess.conn.SubscribeWithID(subID, f.resumeFilters(relay)) {
+		filters := f.resumeFilters(relay)
+		pg = newFollowPager(filters)
+		pg.restart()
+		if !sess.conn.SubscribeWithID(subID, filters) {
 			return relayclient.ErrConnectionClosed
 		}
 		return nil
 	}
 	if err := subscribe(); err != nil {
 		return err
+	}
+	// page asks the next page of stored events (until the oldest the last
+	// one brought), or ends the paging
+	page := func() error {
+		if until, ok := pg.next(); ok {
+			if !sess.conn.SubscribeWithID(pg.sub, pg.filters(until)) {
+				return relayclient.ErrConnectionClosed
+			}
+		} else {
+			if pg.cut != "" {
+				f.opts.Warn(relay, errors.New(pg.cut))
+			}
+			if followPaged != nil {
+				followPaged(relay)
+			}
+		}
+		return nil
 	}
 	retried := false
 	for {
@@ -428,13 +450,35 @@ func (f *follower) stream(ctx context.Context, sess *relaySession, relay string)
 			}
 			switch m := msg.(type) {
 			case *wire.EventSubscriptionResponse:
-				if m.SubscriptionID != subID || m.Event == nil || m.Event.Verify(nip01.WithoutPowCheck()) != nil {
+				if (m.SubscriptionID != subID && m.SubscriptionID != pg.sub) || m.Event == nil || m.Event.Verify(nip01.WithoutPowCheck()) != nil {
 					continue
+				}
+				if m.SubscriptionID == pg.sub || pg.stored {
+					pg.saw(m.Event)
 				}
 				if err := f.emit(m.Event, relay); err != nil {
 					return err
 				}
+			case *wire.EOSESubscriptionResponse:
+				switch {
+				case m.SubscriptionID == subID && pg.stored:
+					pg.stored = false // live from here on
+					if err := page(); err != nil {
+						return err
+					}
+				case m.SubscriptionID == pg.sub && pg.sub != "":
+					sess.conn.CloseSubscription(pg.sub)
+					if err := page(); err != nil {
+						return err
+					}
+				}
 			case *wire.ClosedSubscriptionResponse:
+				if m.SubscriptionID == pg.sub && pg.sub != "" {
+					// a page refused: the live subscription goes on, the rest unpaged
+					f.opts.Warn(relay, fmt.Errorf("relay closed a page of stored events: %s", m.Message))
+					pg.stop()
+					continue
+				}
 				if m.SubscriptionID != subID {
 					continue
 				}
